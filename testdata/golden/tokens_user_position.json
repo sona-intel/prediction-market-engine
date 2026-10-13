@@ -1,0 +1,26 @@
+[
+  {
+    "wallet": "0xA3FEf6E25DC9e39dE8B3899D941A5d0600048d47",
+    "tokens": 9,
+    "realized": 5838632814,
+    "tolerance": 10000
+  },
+  {
+    "wallet": "0xE10b22A72aB329E57cb63869Df6B2Bc5D9BA99dc",
+    "tokens": 39,
+    "realized": -8144356,
+    "tolerance": 0,
+    "first_ts": 1741742420,
+    "last_ts": 1744118128
+  },
+  {
+    "wallet": "0x3E12192d88B0546A3E8630B85E5776007C6a603e",
+    "tokens": 50,
+    "conversions": 3,
+    "realized": -429035627,
+    "without_conversions": -1073204661,
+    "tolerance": 0,
+    "first_ts": 1747444758,
+    "last_ts": 1748163315
+  }
+]

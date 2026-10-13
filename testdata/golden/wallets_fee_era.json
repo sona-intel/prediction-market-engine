@@ -1,0 +1,29 @@
+[
+  {
+    "wallet": "0xA8e9f1718f3dF00873Ab34f60cCB955ccF03039B",
+    "fills": 157,
+    "volume": 6730012561,
+    "realized": -41009881,
+    "fees_paid": 37262,
+    "first_ts": 1771267747,
+    "last_ts": 1772806451
+  },
+  {
+    "wallet": "0x395E9F41570a492Cc0bC3a26149cAC4F9a273E01",
+    "fills": 2906,
+    "volume": 15506093439,
+    "realized": -7869226,
+    "fees_paid": 7294053,
+    "first_ts": 1768578100,
+    "last_ts": 1773372443
+  },
+  {
+    "wallet": "0x7e0EFd64F40cF7219939FDFe55467CAfF66F9517",
+    "fills": 1112,
+    "volume": 25514387889,
+    "realized": -401097534,
+    "fees_paid": 48383231,
+    "first_ts": 1767771393,
+    "last_ts": 1769940708
+  }
+]

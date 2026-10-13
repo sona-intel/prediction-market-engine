@@ -1,0 +1,24 @@
+[
+  {
+    "wallet": "0xAaDce4CcC5a50Ed1CCDC7a0c88dc6adf9B93B7BA",
+    "fills": 97,
+    "volume": 1203998084,
+    "open_unresolved": 26,
+    "settled": 79444405,
+    "polymarket_realized": -997491,
+    "first_ts": 1732009057,
+    "last_ts": 1759785816,
+    "tolerance": 20000
+  },
+  {
+    "wallet": "0xfff9255F919Ac9337B7b5f1859f60f3840c86979",
+    "fills": 126,
+    "volume": 1268125026,
+    "open_unresolved": 26,
+    "settled": 68230701,
+    "polymarket_realized": -17836828,
+    "first_ts": 1732284559,
+    "last_ts": 1761322305,
+    "tolerance": 20000
+  }
+]
