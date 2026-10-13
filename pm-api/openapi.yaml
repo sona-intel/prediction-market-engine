@@ -1,0 +1,1337 @@
+openapi: 3.1.2
+info:
+  title: Sona prediction-market service
+  version: 1.0.0
+  summary: Internal reads of Polymarket trader records, called only by sona-api.
+  description: |
+    This service answers questions about Polymarket traders. For one wallet it gives lifetime profit and loss, a skill rating with a calibration curve, and a wash-trading check with the trades behind any flag. It also serves three leaderboards and a market-wide calibration table. Its history routes read one finished database file and never call Polymarket or Hugging Face while they answer, so every history answer comes from the same closed snapshot. Two more routes serve a live feed of Polymarket's busiest markets and largest recent trades. That feed is kept in memory only and is refreshed once a minute, and it never touches the database file. The public `sona-api` is meant to call this service and to put its bodies inside its own answers. You call it directly to debug, or to see exactly what the public API will get.
+
+    ## What the data covers
+
+    The history runs from the first order-book trade on 2022-11-21 to **Polygon block 85,948,288, which is 2026-04-24 07:43:40 UTC**. Trades after that block are not included, and a market that resolved after it is still open here. Trades on Polymarket's old automated market maker are not part of profit and loss. The source is Envio's public Polymarket dataset (`moose-code/polymarket-onchain-v1`, licence CC BY 4.0), read at one pinned revision. Sona aggregated the source rows into per-wallet and per-market figures and is not affiliated with or endorsed by Polymarket or Envio.
+
+    Every success body ends with a `coverage` object that repeats this: a plain-language `note`, the block and time the data goes through, the dataset `revision`, the `attribution` line, the `license_url`, the `modified` notice and the `source_url`. Anything you show to people must keep the attribution and the modified notice.
+
+    The examples on this page are real answers of the small fixture database that this service is tested on. It is a sample of the dataset, so totals, ranks and wash scores in the examples are not full-history numbers.
+
+    ## How to call it
+
+    The service listens on `127.0.0.1:8191` on the host and on `http://pm-api:8080` inside the Docker network. The Swagger page shows this document but cannot send requests to the service, because the Swagger gateway has no route to it. Use a terminal:
+
+    ```bash
+    curl -s http://127.0.0.1:8191/internal/v1/status
+    curl -s http://127.0.0.1:8191/internal/v1/traders/0x467ecfc0c6265683e90899C41881c0431bDEE2ed
+    curl -s 'http://127.0.0.1:8191/internal/v1/leaderboards/skill?limit=10'
+    curl -s 'http://127.0.0.1:8191/internal/v1/calibration?horizon=1d&market_kind=all'
+    ```
+
+    ## The live feed
+
+    The history ends on 2026-04-24, so two routes sit next to it and show Polymarket as it is now. `GET /internal/v1/pm/markets/top` lists the events with the most trading in the last 24 hours, and `GET /internal/v1/pm/trades/large` lists recent trades of at least $10,000. A background poller reads Polymarket's public Gamma API (the top 50 active events by 24-hour volume) and Data API (the newest 200 trades of at least $10,000) once a minute, which is two requests a minute in total. The copies live in memory and are lost on restart. Nothing from them is written to the database file or mixed into the history tables.
+
+    - Before the first poll has worked, both routes answer 503 `upstream_unavailable` with `retry_after_s` and `Retry-After` of 10.
+    - When a later poll fails, the last good copy is kept and served with `stale: true` and the header `X-Sona-Cache: stale`. `fetched_at` still says when that copy was taken.
+    - A live answer has no `coverage` object and no `Sona-Finality`, `Sona-Block` or `Sona-Block-Time` header, because it describes the present and not a block.
+    - **Amounts in US dollars here are plain JSON numbers**, not the `raw` and `value` amount objects of the history routes. They come from a live feed that is not ledger data, so do not add them up as if they were exact.
+
+    ## Time budget
+
+    The request header `Sona-Deadline-Ms` is the most time, in milliseconds, that a call may take. It is 5000 when the header is absent or is not a whole number. When the budget runs out the answer is 504 `deadline_exceeded`, and a value of 0 or less answers 504 at once without reading anything. `sona-api` sends the time it has left minus a small margin.
+
+    ## Response headers
+
+    A successful history answer describes how far the data reaches in `Sona-*` headers. They are the same on every history route, because the history is one closed snapshot: `Sona-Finality` is always `finalized`, `Sona-Block` is `85948288` and `Sona-Block-Time` is `1777016620`, the Unix time of that block. The live routes send no `Sona-*` header. Every answer, including the two probes, also sends `X-Request-Id`, a random 16-digit hex id. Quote it when you report a problem: the service logs the cause of each 500 under that id.
+
+    ## Errors
+
+    Every error is `application/problem+json` (RFC 9457 problem details) with `Cache-Control: no-store`. A typical body:
+
+    ```json
+    {"type":"urn:sona:problem:invalid_id","title":"Invalid identifier","status":400,"detail":"The wallet must be 0x and 40 hex digits.","instance":"/internal/v1/traders/0x12","code":"invalid_id"}
+    ```
+
+    Branch on `code`, which is stable: `invalid_id` and `invalid_query` (400), `not_found` (404), `internal` (500), `upstream_unavailable` (503, always with `Retry-After: 1`) and `deadline_exceeded` (504). `instance` is the path of the request. A path or method that no route serves answers 404 `not_found` with the detail `No such route.`, so a `POST` gets 404 and not 405. A query parameter that this document does not name is ignored. If the caller disconnects before the answer is ready, the service counts the call as 499 and sends no body.
+
+    The service answers 503 `upstream_unavailable` while no valid database file exists, for example before the first build has finished. It looks for a new or replaced file every 10 seconds and keeps serving the old file while a new one is checked, so a rebuild does not interrupt readers.
+
+    ## Numbers and identifiers
+
+    - An **amount** is an object with `raw`, `decimals`, `symbol` and `value`. `raw` is a signed whole number written as a string, in millionths of the unit. `decimals` is always 6. `symbol` is `USDC` for money in dollars and `shares` for outcome shares, and `value` is the same number as an exact decimal string without trailing zeros. A loss is negative.
+    - A **ratio** such as `flagged_share` or `win_rate.value` is a plain JSON number from 0 to 1.
+    - A **wallet** or other address is `0x` and 40 lowercase hex digits in answers. A request may use any case, and the service does not check the EIP-55 capitals.
+    - A **time** is RFC 3339 in UTC, to whole seconds, ending in `Z`.
+    - A **trade id** is `137_<block>_<logIndex>`: the Polygon chain id, the block number and the position of the log in the block, so the trade can be found on chain.
+
+    ## How this differs from the public API
+
+    - The body is the bare record, with a `kind` and no `data`, `meta` and `links` envelope.
+    - There are no credits, rate limits, payment headers or authentication. Access is limited by the network: the service listens only on the Docker network and on `127.0.0.1`.
+    - There is no caching. Successful answers carry no `Cache-Control` or `ETag`, and `sona-api` is the layer that caches.
+    - Only `GET` is used. A `HEAD` request is also answered, with the same headers and no body.
+    - Nothing here trades, pays or acts for anyone. It only serves data.
+servers:
+  - url: http://127.0.0.1:8191
+    description: pm-api on the host. Inside the Docker network it is http://pm-api:8080.
+tags:
+  - name: Status
+    description: |
+      Whether a database is loaded, when it was built, and how much it holds.
+  - name: Traders
+    description: |
+      The full record of one wallet: activity, profit and loss, skill and wash-trading checks.
+  - name: Leaderboards
+    description: |
+      Wallets ranked by net profit, by volume or by forecasting skill, in pages.
+  - name: Calibration
+    description: |
+      How well market prices predicted outcomes, across all resolved markets.
+  - name: Live
+    description: |
+      Polymarket's busiest markets and largest recent trades right now, kept in memory and refreshed once a minute.
+  - name: Operations
+    description: |
+      Probes for the container health check and for operators. They have no body.
+paths:
+  /internal/v1/status:
+    get:
+      operationId: getStatus
+      tags: [Status]
+      summary: Get the state of the loaded database
+      description: |
+        Call this to see whether the service holds a database, when that database was built, which rules built it and how much it contains. The body is `ready` (always `true` in an answer, because without a database the answer is 503), `built_at` (when the build published the file), `rules_version` (the version of the rules that computed every figure, which changes whenever a rule changes) and `totals`:
+
+        - `fills` is the number of fills over all wallets. A match between two wallets is one fill for each of them, so it counts twice here, and the dataset's own trade count counts every match twice in the same way.
+        - `wallets` is the number of wallets with at least one fill. These are the wallets that have a profile.
+        - `rated_wallets` is the number of those that reached the skill floor of 30 rated markets in at least 3 events.
+        - `markets` and `resolved_markets` are the markets in the database and the part of them that had resolved by the cutoff.
+
+        The `coverage` object says what period the data covers. The totals and the coverage are read once when a database file is opened, so this call never touches the tables and is quick. A short `Sona-Deadline-Ms` only matters if it is 0 or less.
+
+        Errors: 503 `upstream_unavailable` when no valid database exists yet, and 504 `deadline_exceeded` only when `Sona-Deadline-Ms` is 0 or less.
+      parameters:
+        - $ref: '#/components/parameters/DeadlineMs'
+      responses:
+        "200":
+          description: A database is loaded. The body is the status record.
+          headers: &stampHeaders
+            Sona-Finality: {$ref: '#/components/headers/SonaFinality'}
+            Sona-Block: {$ref: '#/components/headers/SonaBlock'}
+            Sona-Block-Time: {$ref: '#/components/headers/SonaBlockTime'}
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PmStatus'}
+              examples:
+                fixture:
+                  summary: The fixture database
+                  value: {"kind": "pm_status", "ready": true, "built_at": "2026-10-12T15:51:21.760Z", "rules_version": "pm-rules-1", "totals": {"fills": 45633, "wallets": 6847, "rated_wallets": 3, "markets": 3307, "resolved_markets": 3272}, "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+        "500":
+          $ref: '#/components/responses/Internal'
+          description: The service failed in a way it has no name for (`internal`). This route only reports numbers it read when the file was opened, so it should not happen. Report the `X-Request-Id`, because the service log holds the cause under that id.
+        "503":
+          $ref: '#/components/responses/Unavailable'
+          description: No valid database file exists yet (`upstream_unavailable`). The first build has not finished, or the file is not a DuckDB database. Retry after the `Retry-After` of 1 s.
+        "504":
+          $ref: '#/components/responses/DeadlineExceeded'
+          description: '`Sona-Deadline-Ms` was 0 or less. This route reads no table, so a positive budget never runs out.'
+  /internal/v1/traders/{wallet}:
+    get:
+      operationId: getTrader
+      tags: [Traders]
+      summary: Get the full record of one wallet
+      description: |
+        Call this to see everything the service knows about one Polymarket wallet: what it traded, what it earned over its whole life, how good its forecasts were, and whether its trades look like wash trading. The `wallet` is `0x` and 40 hex digits in any case, such as `0x467ecfc0c6265683e90899C41881c0431bDEE2ed`. The address is the contract wallet that Polymarket trades through, a proxy contract or a Safe contract. When Polymarket's wallet registry lists it, `owner` is the account that controls it and `owner_kind` is `proxy` or `safe`. In a sample, about 90% of wallets were listed. Both are `null` for the others. Only wallets with at least one fill have a record.
+
+        **Activity.** The figures count the wallet's own side of every trade, so a volume is counted once and never twice as in the raw dataset. `fills` is the number of its own fills and `volume` their value in USDC, with `buy_volume` the part that was buying. `taker_fills` and `taker_volume` are the part where the wallet's order was the one that took liquidity from the book. `markets` is the number of markets in which the wallet has any event: a fill, a split, a merge, a redemption or a conversion. `first_trade` and `last_trade` are the times of its first and last fill.
+
+        **Profit and loss.** `pnl.realized` is the net result of the whole life of the wallet, `gross` minus `fees`, and it is computed like this:
+
+        - Each token the wallet holds has an average cost. A buy raises the position and moves the average cost. A sell realizes the gap between the sell price and the average cost on the shares sold. A sell above the amount held is capped at what was held.
+        - A split (one dollar turned into a share of each outcome) counts as buying both outcomes at 50 cents, and a merge as selling both at 50 cents. A neg-risk conversion follows the same average-cost rule.
+        - When a market resolves, whatever the wallet still holds in it is sold at the payout: a dollar a share for the winning outcome, nothing for the losing one, 50 cents each for a 50-50 resolution. This settlement is what makes the result equal Polymarket's own realized figure.
+        - The exchange charged fees from 2026-01-06 04:51:15 UTC. `fees` is what the wallet paid and is taken off. A fee taken in shares is valued at the wallet's average buy price in that market. Earlier fills have no fee.
+        - A position in a market that had not resolved by the cutoff is not valued, because no mark price exists. It adds to `open_unresolved_positions` and `final` is `false`. Read such a `realized` as the result so far.
+        - Trades on the old automated market maker are counted in `amm_trades_excluded` and are not in the result.
+
+        `biggest_win` is the best net result in any single market, and it is 0 when that is $1.00 or less. `resolved_markets` is the number of its markets that had resolved and `won_markets` the part of them with net profit above 0. `win_rate` shows `value` and its lower bound at 95% confidence (`wilson_lower`) only from 30 resolved markets (`floor`), and `shown` says which. Below that both are `null`, because a ratio of a few markets says nothing.
+
+        **Skill.** A market is rated for the wallet when it resolved, is an ordinary market (not an Up or Down market and not one whose question text is missing), and the wallet traded in it at least 12 hours before it resolved (`horizon_hours`). The wallet's forecast in that market is its last such trade, restated as a probability for the outcome it backed: a buy backs the outcome it bought at the price paid, and a sell backs the other outcome at one minus the price. Resolution time is the time of the first redemption in the market, which is a proxy. `brier` is the mean squared gap between forecast and outcome, where lower is better. `edge` is the mean of outcome minus forecast: above 0 means the outcomes it backed came true more often than the prices it paid implied. `edge_se` is the standard error of that mean. The wallet is `rated` from 30 rated markets in at least 3 events (`floor`), where an event is the neg-risk market, or the market itself when there is none. Several separate markets of one Polymarket event can count as several events. Below the floor `brier`, `edge` and `edge_se` are `null`, `calibration` is empty, and `markets` and `events` still show how far the wallet is from the floor. A rated wallet carries five calibration buckets of width 0.2 on the forecast, each with its market count, the mean forecast and the observed frequency of the outcome, with zeros in a bucket that holds no market.
+
+        **Wash trading.** The check follows the method of a Columbia University paper on wash trading on Polymarket, called the Columbia method here. Two wallets that keep trading with each other and close their positions are suspicious. Every wallet gets a `score` from 0 to 1. It starts as the share of the wallet's volume in markets where it fully closed out a position, and it is then mixed with the scores of the wallets it trades against, so a wallet that mostly trades with closers scores high too. For each market the method then picks a threshold from the scores, and a trade is **flagged** when both wallets score at least that threshold. `paired_volume` is the shares the wallet traded against another wallet, `flagged_volume` the flagged part and `flagged_share` the ratio. A wallet is flagged when `flagged_volume` is above 0. `scored` is `false`, and `score` `null`, for a wallet with no paired trades. A score is a signal and not a verdict: it says the trading pattern fits, not who is behind it.
+
+        `evidence` shows what lies behind a flag, and it is empty for a wallet that is not flagged. `counterparties` are the top 5 wallets by flagged shares and `trades` the top 20 flagged trades by shares (ties go to the earlier trade). The lists are cut to that length, but the totals above them are exact, and so are the figures inside the lists. A trade is seen from this wallet's side: `side` is what this wallet did, `outcome` is the market outcome 0 or 1 that changed hands, and `price` is `usdc` per share.
+
+        Errors: 400 `invalid_id` for a wallet that is not `0x` and 40 hex digits. 404 `not_found` for a wallet with no fills, which includes one that only split, merged or redeemed. 503 `upstream_unavailable` when no valid database exists yet, and 504 `deadline_exceeded` when the budget runs out.
+      parameters:
+        - $ref: '#/components/parameters/Wallet'
+        - $ref: '#/components/parameters/DeadlineMs'
+      responses:
+        "200":
+          description: The wallet has a record. The body is the trader record.
+          headers: *stampHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PmTrader'}
+              examples:
+                golden:
+                  summary: A wallet with 11 resolved markets, so it has no win rate and no skill rating yet
+                  value: {"kind": "pm_trader", "wallet": "0x467ecfc0c6265683e90899c41881c0431bdee2ed", "owner": "0x1ba177cdd00a459508ccdd88d5530202a2e202db", "owner_kind": "safe", "activity": {"fills": 290, "markets": 11, "volume": {"raw": "716582888996", "decimals": 6, "symbol": "USDC", "value": "716582.888996"}, "buy_volume": {"raw": "366611056390", "decimals": 6, "symbol": "USDC", "value": "366611.05639"}, "taker_fills": 23, "taker_volume": {"raw": "419332273059", "decimals": 6, "symbol": "USDC", "value": "419332.273059"}, "first_trade": "2025-07-09T04:21:12Z", "last_trade": "2025-07-20T16:04:51Z"}, "pnl": {"realized": {"raw": "-16628825094", "decimals": 6, "symbol": "USDC", "value": "-16628.825094"}, "gross": {"raw": "-16628825094", "decimals": 6, "symbol": "USDC", "value": "-16628.825094"}, "fees": {"raw": "0", "decimals": 6, "symbol": "USDC", "value": "0"}, "biggest_win": {"raw": "95527217758", "decimals": 6, "symbol": "USDC", "value": "95527.217758"}, "resolved_markets": 11, "won_markets": 4, "win_rate": {"value": null, "wilson_lower": null, "shown": false, "floor": 30}, "open_unresolved_positions": 0, "final": true, "amm_trades_excluded": 0}, "skill": {"rated": false, "floor": {"markets": 30, "events": 3}, "horizon_hours": 12, "markets": 0, "events": 0, "brier": null, "edge": null, "edge_se": null, "calibration": []}, "wash": {"scored": true, "score": 0.1473294119672094, "paired_volume": {"raw": "1155426988216", "decimals": 6, "symbol": "shares", "value": "1155426.988216"}, "flagged_volume": {"raw": "0", "decimals": 6, "symbol": "shares", "value": "0"}, "flagged_share": 0, "algorithm": "columbia-2", "evidence": {"counterparties": [], "trades": []}}, "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+                rated:
+                  summary: A rated wallet, with a win rate and a calibration curve
+                  value: {"kind": "pm_trader", "wallet": "0x6326fc8a7361717b3926287f2998c91ee4faade2", "owner": "0x1f3e1cdabec4d0af378818c1399562d96eb76df0", "owner_kind": "safe", "activity": {"fills": 353, "markets": 56, "volume": {"raw": "66058482953", "decimals": 6, "symbol": "USDC", "value": "66058.482953"}, "buy_volume": {"raw": "42560521098", "decimals": 6, "symbol": "USDC", "value": "42560.521098"}, "taker_fills": 69, "taker_volume": {"raw": "11288538064", "decimals": 6, "symbol": "USDC", "value": "11288.538064"}, "first_trade": "2024-10-23T05:37:05Z", "last_trade": "2025-10-27T05:24:27Z"}, "pnl": {"realized": {"raw": "5038163967", "decimals": 6, "symbol": "USDC", "value": "5038.163967"}, "gross": {"raw": "5038163967", "decimals": 6, "symbol": "USDC", "value": "5038.163967"}, "fees": {"raw": "0", "decimals": 6, "symbol": "USDC", "value": "0"}, "biggest_win": {"raw": "3468000000", "decimals": 6, "symbol": "USDC", "value": "3468"}, "resolved_markets": 56, "won_markets": 33, "win_rate": {"value": 0.5893, "wilson_lower": 0.4588, "shown": true, "floor": 30}, "open_unresolved_positions": 0, "final": true, "amm_trades_excluded": 0}, "skill": {"rated": true, "floor": {"markets": 30, "events": 3}, "horizon_hours": 12, "markets": 49, "events": 48, "brier": 0.12088593877551021, "edge": 0.027938775510204083, "edge_se": 0.05002194593344768, "calibration": [{"lo": 0, "hi": 0.2, "markets": 5, "mean_forecast": 0.138, "observed": 0.2}, {"lo": 0.2, "hi": 0.4, "markets": 5, "mean_forecast": 0.2906, "observed": 0}, {"lo": 0.4, "hi": 0.6, "markets": 15, "mean_forecast": 0.48886666666666667, "observed": 0.6}, {"lo": 0.6, "hi": 0.8, "markets": 6, "mean_forecast": 0.6233333333333334, "observed": 0.6666666666666666}, {"lo": 0.8, "hi": 1, "markets": 18, "mean_forecast": 0.9675, "observed": 1}]}, "wash": {"scored": true, "score": 0.06577481034253652, "paired_volume": {"raw": "732322643242", "decimals": 6, "symbol": "shares", "value": "732322.643242"}, "flagged_volume": {"raw": "0", "decimals": 6, "symbol": "shares", "value": "0"}, "flagged_share": 0, "algorithm": "columbia-2", "evidence": {"counterparties": [], "trades": []}}, "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+                open_positions:
+                  summary: A wallet with positions in markets that had not resolved by the cutoff, so final is false
+                  value: {"kind": "pm_trader", "wallet": "0xaadce4ccc5a50ed1ccdc7a0c88dc6adf9b93b7ba", "owner": "0xdc5b83afe0c2ab82234fa79fc64ea43a8ec3cc2c", "owner_kind": "safe", "activity": {"fills": 97, "markets": 132, "volume": {"raw": "1203998084", "decimals": 6, "symbol": "USDC", "value": "1203.998084"}, "buy_volume": {"raw": "666359554", "decimals": 6, "symbol": "USDC", "value": "666.359554"}, "taker_fills": 81, "taker_volume": {"raw": "1145327924", "decimals": 6, "symbol": "USDC", "value": "1145.327924"}, "first_trade": "2024-11-19T09:37:37Z", "last_trade": "2025-10-06T21:23:36Z"}, "pnl": {"realized": {"raw": "79444488", "decimals": 6, "symbol": "USDC", "value": "79.444488"}, "gross": {"raw": "79444488", "decimals": 6, "symbol": "USDC", "value": "79.444488"}, "fees": {"raw": "0", "decimals": 6, "symbol": "USDC", "value": "0"}, "biggest_win": {"raw": "96771258", "decimals": 6, "symbol": "USDC", "value": "96.771258"}, "resolved_markets": 106, "won_markets": 22, "win_rate": {"value": 0.2075, "wilson_lower": 0.1412, "shown": true, "floor": 30}, "open_unresolved_positions": 26, "final": false, "amm_trades_excluded": 0}, "skill": {"rated": false, "floor": {"markets": 30, "events": 3}, "horizon_hours": 12, "markets": 1, "events": 1, "brier": null, "edge": null, "edge_se": null, "calibration": []}, "wash": {"scored": true, "score": 0.01368365272862814, "paired_volume": {"raw": "2531600000", "decimals": 6, "symbol": "shares", "value": "2531.6"}, "flagged_volume": {"raw": "0", "decimals": 6, "symbol": "shares", "value": "0"}, "flagged_share": 0, "algorithm": "columbia-2", "evidence": {"counterparties": [], "trades": []}}, "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+                flagged:
+                  summary: A wallet whose trades were flagged as wash trades, with the counterparty and the trades behind the flag
+                  value: {"kind": "pm_trader", "wallet": "0x0ef286b836e4efa2aa3403cfba1baa6c54d8e986", "owner": null, "owner_kind": null, "activity": {"fills": 4, "markets": 1, "volume": {"raw": "25816122000", "decimals": 6, "symbol": "USDC", "value": "25816.122"}, "buy_volume": {"raw": "12865226000", "decimals": 6, "symbol": "USDC", "value": "12865.226"}, "taker_fills": 1, "taker_volume": {"raw": "10534000", "decimals": 6, "symbol": "USDC", "value": "10.534"}, "first_trade": "2025-05-16T07:28:14Z", "last_trade": "2025-05-16T08:30:06Z"}, "pnl": {"realized": {"raw": "85670000", "decimals": 6, "symbol": "USDC", "value": "85.67"}, "gross": {"raw": "85670000", "decimals": 6, "symbol": "USDC", "value": "85.67"}, "fees": {"raw": "0", "decimals": 6, "symbol": "USDC", "value": "0"}, "biggest_win": {"raw": "85670000", "decimals": 6, "symbol": "USDC", "value": "85.67"}, "resolved_markets": 1, "won_markets": 1, "win_rate": {"value": null, "wilson_lower": null, "shown": false, "floor": 30}, "open_unresolved_positions": 0, "final": true, "amm_trades_excluded": 0}, "skill": {"rated": false, "floor": {"markets": 30, "events": 3}, "horizon_hours": 12, "markets": 1, "events": 1, "brier": null, "edge": null, "edge_se": null, "calibration": []}, "wash": {"scored": true, "score": 0.9998909823239589, "paired_volume": {"raw": "57052000000", "decimals": 6, "symbol": "shares", "value": "57052"}, "flagged_volume": {"raw": "57029000000", "decimals": 6, "symbol": "shares", "value": "57029"}, "flagged_share": 0.9995968590058193, "algorithm": "columbia-2", "evidence": {"counterparties": [{"wallet": "0x0f7d807ecfa6aca2acf9ebcfea543efc83e51033", "score": 0.9999003887327607, "markets": 1, "trades": 3, "shares": {"raw": "57029000000", "decimals": 6, "symbol": "shares", "value": "57029"}}], "trades": [{"id": "137_71578356_678", "time": "2025-05-16T07:28:14Z", "market": {"condition": "0xc0d117acf059a4870b116b50732020883e24dfc3577249ff37a74c6ce77d1f4d", "question": "Will Manchester United win the UEFA Europa League?"}, "counterparty": "0x0f7d807ecfa6aca2acf9ebcfea543efc83e51033", "side": "buy", "outcome": 1, "shares": {"raw": "28519000000", "decimals": 6, "symbol": "shares", "value": "28519"}, "usdc": {"raw": "12862069000", "decimals": 6, "symbol": "USDC", "value": "12862.069"}, "price": 0.451}, {"id": "137_71580103_514", "time": "2025-05-16T08:30:06Z", "market": {"condition": "0xc0d117acf059a4870b116b50732020883e24dfc3577249ff37a74c6ce77d1f4d", "question": "Will Manchester United win the UEFA Europa League?"}, "counterparty": "0x0f7d807ecfa6aca2acf9ebcfea543efc83e51033", "side": "sell", "outcome": 1, "shares": {"raw": "28503000000", "decimals": 6, "symbol": "shares", "value": "28503"}, "usdc": {"raw": "12940362000", "decimals": 6, "symbol": "USDC", "value": "12940.362"}, "price": 0.454}, {"id": "137_71578356_664", "time": "2025-05-16T07:28:14Z", "market": {"condition": "0xc0d117acf059a4870b116b50732020883e24dfc3577249ff37a74c6ce77d1f4d", "question": "Will Manchester United win the UEFA Europa League?"}, "counterparty": "0x0f7d807ecfa6aca2acf9ebcfea543efc83e51033", "side": "buy", "outcome": 1, "shares": {"raw": "7000000", "decimals": 6, "symbol": "shares", "value": "7"}, "usdc": {"raw": "3157000", "decimals": 6, "symbol": "USDC", "value": "3.157"}, "price": 0.451}]}}, "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+        "400":
+          $ref: '#/components/responses/BadRequest'
+          description: The `wallet` is not `0x` followed by 40 hex digits (`invalid_id`).
+        "404":
+          $ref: '#/components/responses/NotFound'
+          description: The wallet has no fills in the dataset (`not_found`). It never traded on the order book, or it only split, merged or redeemed. The same code and the detail `No such route.` answer a path or method that no route serves.
+        "500": {$ref: '#/components/responses/Internal'}
+        "503": {$ref: '#/components/responses/Unavailable'}
+        "504": {$ref: '#/components/responses/DeadlineExceeded'}
+  /internal/v1/leaderboards/{board}:
+    get:
+      operationId: getLeaderboard
+      tags: [Leaderboards]
+      summary: Get a page of a leaderboard
+      description: |
+        Call this to list wallets in rank order. There are three boards:
+
+        - `pnl` ranks every wallet by net profit, `gross` minus `fees` over its whole life, highest first. A wallet with open positions is ranked on its result so far, and its `final` is `false`.
+        - `volume` ranks every wallet by its volume in USDC, counted once, highest first.
+        - `skill` ranks only rated wallets (30 rated markets in at least 3 events) by `edge_lb`, the edge minus 1.96 standard errors, highest first. It ranks on the lower bound and not on Brier, because a wallet that only trades at 0.99 has a tiny Brier and no edge. `edge_lb` can be negative. The board is short: most wallets are never rated.
+
+        Ties break on volume, highest first, and then on an internal wallet number, so the order is the same on every call and pages never overlap. Wallets without a fill are not on any board.
+
+        `limit` is the page size, 1 to 100, 50 by default. `offset` is how many rows to skip, 0 to 10000, 0 by default. `rank` is the position on the board, counted from 1, so the first row of a page has the rank `offset + 1`. `total` is the number of wallets on the board: all wallets for `pnl` and `volume`, and the rated wallets for `skill`. A page past the end is not an error. It has an empty `rows` array and the right `total`.
+
+        A row has the wallet, its `fills`, `markets`, `volume` and net `realized` profit (the same figures as in the trader record), `final`, the `wash_share` (the flagged part of the shares it traded against other wallets, 0 when it has none) and `skill`. `skill` is `null` for a wallet that is not rated and otherwise holds `markets`, `events`, `brier`, `edge` and `edge_lb`. Read the rules behind these figures in the trader route. Pull the full record of a row with the trader route.
+
+        Errors: 400 `invalid_id` for a `board` that is not `pnl`, `volume` or `skill`. 400 `invalid_query` for a `limit` or `offset` that is not a whole number in its range. 503 `upstream_unavailable` when no valid database exists yet, and 504 `deadline_exceeded` when the budget runs out.
+      parameters:
+        - $ref: '#/components/parameters/Board'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/DeadlineMs'
+      responses:
+        "200":
+          description: The board exists. The body is one page of it.
+          headers: *stampHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PmLeaderboard'}
+              examples:
+                pnl:
+                  summary: The three wallets with the highest net profit (limit=3)
+                  value: {"kind": "pm_leaderboard", "board": "pnl", "limit": 3, "offset": 0, "total": 6847, "rows": [{"rank": 1, "wallet": "0x245b31a4e70a19ec509af9309b2dfd8cb24400c5", "fills": 77, "markets": 2, "volume": {"raw": "54619868563", "decimals": 6, "symbol": "USDC", "value": "54619.868563"}, "realized": {"raw": "68683121481", "decimals": 6, "symbol": "USDC", "value": "68683.121481"}, "final": true, "wash_share": 0, "skill": null}, {"rank": 2, "wallet": "0xb506415b65ffab876ce6ad0010626d7a87e88f79", "fills": 84, "markets": 1, "volume": {"raw": "174568517770", "decimals": 6, "symbol": "USDC", "value": "174568.51777"}, "realized": {"raw": "28418130799", "decimals": 6, "symbol": "USDC", "value": "28418.130799"}, "final": true, "wash_share": 0, "skill": null}, {"rank": 3, "wallet": "0x750293910fb12264a6d02f5c3bb6390a00bdbeaf", "fills": 7, "markets": 2, "volume": {"raw": "110696972936", "decimals": 6, "symbol": "USDC", "value": "110696.972936"}, "realized": {"raw": "7490940668", "decimals": 6, "symbol": "USDC", "value": "7490.940668"}, "final": true, "wash_share": 0, "skill": null}], "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+                volume:
+                  summary: The three wallets with the highest volume (limit=3)
+                  value: {"kind": "pm_leaderboard", "board": "volume", "limit": 3, "offset": 0, "total": 6847, "rows": [{"rank": 1, "wallet": "0x86793ad1e8f33ae23bcaf93200ec5c7bd2664659", "fills": 211, "markets": 15, "volume": {"raw": "867371014169", "decimals": 6, "symbol": "USDC", "value": "867371.014169"}, "realized": {"raw": "6241433317", "decimals": 6, "symbol": "USDC", "value": "6241.433317"}, "final": true, "wash_share": 0, "skill": null}, {"rank": 2, "wallet": "0xa8e0f6cd46306617f7b9d0897fef215fb02f1dd2", "fills": 93, "markets": 3, "volume": {"raw": "816280504752", "decimals": 6, "symbol": "USDC", "value": "816280.504752"}, "realized": {"raw": "1768625629", "decimals": 6, "symbol": "USDC", "value": "1768.625629"}, "final": true, "wash_share": 0, "skill": null}, {"rank": 3, "wallet": "0x467ecfc0c6265683e90899c41881c0431bdee2ed", "fills": 290, "markets": 11, "volume": {"raw": "716582888996", "decimals": 6, "symbol": "USDC", "value": "716582.888996"}, "realized": {"raw": "-16628825094", "decimals": 6, "symbol": "USDC", "value": "-16628.825094"}, "final": true, "wash_share": 0, "skill": null}], "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+                skill:
+                  summary: The rated wallets of the fixture database, ranked by the lower bound of their edge
+                  value: {"kind": "pm_leaderboard", "board": "skill", "limit": 50, "offset": 0, "total": 3, "rows": [{"rank": 1, "wallet": "0x782085795ff8df34b5df0d7e782f982607f5485b", "fills": 1565, "markets": 493, "volume": {"raw": "638186535331", "decimals": 6, "symbol": "USDC", "value": "638186.535331"}, "realized": {"raw": "5986336130", "decimals": 6, "symbol": "USDC", "value": "5986.33613"}, "final": true, "wash_share": 0, "skill": {"markets": 236, "events": 236, "brier": 0.006179737534309323, "edge": 0.012191724576271186, "edge_lb": 0.002262384557944235}}, {"rank": 2, "wallet": "0x6326fc8a7361717b3926287f2998c91ee4faade2", "fills": 353, "markets": 56, "volume": {"raw": "66058482953", "decimals": 6, "symbol": "USDC", "value": "66058.482953"}, "realized": {"raw": "5038163967", "decimals": 6, "symbol": "USDC", "value": "5038.163967"}, "final": true, "wash_share": 0, "skill": {"markets": 49, "events": 48, "brier": 0.12088593877551021, "edge": 0.027938775510204083, "edge_lb": -0.07010423851935337}}, {"rank": 3, "wallet": "0xc7c0884434447abb587ee7ff2e6af0cdc00cd714", "fills": 245, "markets": 139, "volume": {"raw": "2446040515", "decimals": 6, "symbol": "USDC", "value": "2446.040515"}, "realized": {"raw": "-388449552", "decimals": 6, "symbol": "USDC", "value": "-388.449552"}, "final": false, "wash_share": 0, "skill": {"markets": 43, "events": 43, "brier": 0.20342500509553488, "edge": 0.054365441860465116, "edge_lb": -0.08104603526276842}}], "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+        "400":
+          $ref: '#/components/responses/BadRequest'
+          description: The `board` is not `pnl`, `volume` or `skill` (`invalid_id`), or `limit` or `offset` is not a whole number in its range (`invalid_query`).
+        "500": {$ref: '#/components/responses/Internal'}
+        "503": {$ref: '#/components/responses/Unavailable'}
+        "504": {$ref: '#/components/responses/DeadlineExceeded'}
+  /internal/v1/calibration:
+    get:
+      operationId: getCalibration
+      tags: [Calibration]
+      summary: Get how well market prices predicted outcomes
+      description: |
+        Call this to see how calibrated Polymarket prices were. A market is **well calibrated** when outcomes that were priced at 70 cents came true about 70% of the time. The table takes every resolved market with a price at the chosen time before it resolved, sorts the markets into 20 buckets of width 0.05 by that price, and compares the average price in each bucket with how often the outcome came true.
+
+        The price of a market is the price of its first outcome (outcome 0) at the last trade at or before `horizon` hours ahead of the resolution time. The resolution time is the time of the first redemption in the market, which is a proxy. `horizon` is `4h`, `12h` (the default), `1d` or `1w`, and the body repeats it as `horizon_hours`: 4, 12, 24 or 168. The `market_kind` picks which markets to count:
+
+        - `other` (the default) is the ordinary markets with question text. The skill ratings use only these.
+        - `updown` is the short Up or Down markets, those whose question contains "up or down".
+        - `unknown` is markets whose question text is missing.
+        - `all` is the three kinds together.
+
+        The body has `markets`, the number of markets counted, and `brier`, the mean squared gap between price and outcome (lower is better, and `null` when no market was counted). Each bucket has `lo` and `hi`, its `markets`, the `mean_price` of its markets and `observed`, the share that came true. A 50-50 resolution counts as one half. A bucket without markets shows zeros. A point on the line `observed = mean_price` is perfectly calibrated. `excluded.no_price` is the number of resolved markets of the chosen kind that have no price, because nothing traded before the horizon or the resolution time is unknown. They are left out of every bucket.
+
+        Errors: 400 `invalid_query` for a `horizon` or `market_kind` that is not in its list. 503 `upstream_unavailable` when no valid database exists yet, and 504 `deadline_exceeded` when the budget runs out.
+      parameters:
+        - $ref: '#/components/parameters/Horizon'
+        - $ref: '#/components/parameters/MarketKind'
+        - $ref: '#/components/parameters/DeadlineMs'
+      responses:
+        "200":
+          description: The body is the calibration table for the chosen horizon and kind.
+          headers: *stampHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PmCalibration'}
+              examples:
+                default:
+                  summary: The default, ordinary markets 12 hours before resolution
+                  value: {"kind": "pm_calibration", "horizon_hours": 12, "market_kind": "other", "markets": 226, "brier": 0.10588403378577434, "buckets": [{"lo": 0, "hi": 0.05, "markets": 57, "mean_price": 0.010826842105263159, "observed": 0}, {"lo": 0.05, "hi": 0.1, "markets": 9, "mean_price": 0.06902022222222222, "observed": 0.16666666666666666}, {"lo": 0.1, "hi": 0.15, "markets": 17, "mean_price": 0.1202444705882353, "observed": 0.23529411764705882}, {"lo": 0.15, "hi": 0.2, "markets": 9, "mean_price": 0.17960766666666667, "observed": 0.2222222222222222}, {"lo": 0.2, "hi": 0.25, "markets": 5, "mean_price": 0.227127, "observed": 0}, {"lo": 0.25, "hi": 0.3, "markets": 3, "mean_price": 0.278273, "observed": 0.6666666666666666}, {"lo": 0.3, "hi": 0.35, "markets": 7, "mean_price": 0.3205968571428572, "observed": 0.4285714285714286}, {"lo": 0.35, "hi": 0.4, "markets": 8, "mean_price": 0.367842875, "observed": 0.25}, {"lo": 0.4, "hi": 0.45, "markets": 12, "mean_price": 0.423333, "observed": 0.4166666666666667}, {"lo": 0.45, "hi": 0.5, "markets": 11, "mean_price": 0.47591154545454545, "observed": 0.2727272727272727}, {"lo": 0.5, "hi": 0.55, "markets": 5, "mean_price": 0.5159998, "observed": 0.4}, {"lo": 0.55, "hi": 0.6, "markets": 6, "mean_price": 0.5774996666666666, "observed": 0.8333333333333334}, {"lo": 0.6, "hi": 0.65, "markets": 6, "mean_price": 0.6226105, "observed": 0.6666666666666666}, {"lo": 0.65, "hi": 0.7, "markets": 3, "mean_price": 0.676666, "observed": 1}, {"lo": 0.7, "hi": 0.75, "markets": 1, "mean_price": 0.739999, "observed": 1}, {"lo": 0.75, "hi": 0.8, "markets": 4, "mean_price": 0.76999925, "observed": 0.75}, {"lo": 0.8, "hi": 0.85, "markets": 3, "mean_price": 0.82, "observed": 0.6666666666666666}, {"lo": 0.85, "hi": 0.9, "markets": 4, "mean_price": 0.879192, "observed": 0.75}, {"lo": 0.9, "hi": 0.95, "markets": 8, "mean_price": 0.920874625, "observed": 1}, {"lo": 0.95, "hi": 1, "markets": 48, "mean_price": 0.9881457708333333, "observed": 0.9791666666666666}], "excluded": {"no_price": 909}, "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+                week_all:
+                  summary: All kinds of market one week before resolution (horizon=1w and market_kind=all)
+                  value: {"kind": "pm_calibration", "horizon_hours": 168, "market_kind": "all", "markets": 118, "brier": 0.11942103552325425, "buckets": [{"lo": 0, "hi": 0.05, "markets": 46, "mean_price": 0.00702095652173913, "observed": 0}, {"lo": 0.05, "hi": 0.1, "markets": 3, "mean_price": 0.076244, "observed": 0}, {"lo": 0.1, "hi": 0.15, "markets": 6, "mean_price": 0.12647433333333333, "observed": 0.3333333333333333}, {"lo": 0.15, "hi": 0.2, "markets": 4, "mean_price": 0.1787495, "observed": 0}, {"lo": 0.2, "hi": 0.25, "markets": 4, "mean_price": 0.2224995, "observed": 0}, {"lo": 0.25, "hi": 0.3, "markets": 2, "mean_price": 0.2799995, "observed": 0}, {"lo": 0.3, "hi": 0.35, "markets": 6, "mean_price": 0.318333, "observed": 0.3333333333333333}, {"lo": 0.35, "hi": 0.4, "markets": 3, "mean_price": 0.3766663333333333, "observed": 0.3333333333333333}, {"lo": 0.4, "hi": 0.45, "markets": 5, "mean_price": 0.4267252, "observed": 0.4}, {"lo": 0.45, "hi": 0.5, "markets": 7, "mean_price": 0.4724284285714286, "observed": 0.28571428571428575}, {"lo": 0.5, "hi": 0.55, "markets": 0, "mean_price": 0, "observed": 0}, {"lo": 0.55, "hi": 0.6, "markets": 8, "mean_price": 0.57266925, "observed": 0.625}, {"lo": 0.6, "hi": 0.65, "markets": 2, "mean_price": 0.625, "observed": 0}, {"lo": 0.65, "hi": 0.7, "markets": 1, "mean_price": 0.697999, "observed": 1}, {"lo": 0.7, "hi": 0.75, "markets": 3, "mean_price": 0.7133333333333334, "observed": 0.6666666666666666}, {"lo": 0.75, "hi": 0.8, "markets": 1, "mean_price": 0.769999, "observed": 0}, {"lo": 0.8, "hi": 0.85, "markets": 5, "mean_price": 0.8219998000000001, "observed": 0.4}, {"lo": 0.85, "hi": 0.9, "markets": 1, "mean_price": 0.879999, "observed": 1}, {"lo": 0.9, "hi": 0.95, "markets": 3, "mean_price": 0.9226656666666666, "observed": 1}, {"lo": 0.95, "hi": 1, "markets": 8, "mean_price": 0.98624975, "observed": 0.875}], "excluded": {"no_price": 3154}, "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+        "400":
+          $ref: '#/components/responses/BadRequest'
+          description: The `horizon` is not `4h`, `12h`, `1d` or `1w`, or the `market_kind` is not `other`, `updown`, `unknown` or `all` (`invalid_query`).
+        "500": {$ref: '#/components/responses/Internal'}
+        "503": {$ref: '#/components/responses/Unavailable'}
+        "504": {$ref: '#/components/responses/DeadlineExceeded'}
+  /internal/v1/pm/markets/top:
+    get:
+      operationId: getTopMarkets
+      tags: [Live]
+      summary: Get the Polymarket events with the most trading today
+      description: |
+        Call this to see which Polymarket events traded the most in the last 24 hours. The service polls Polymarket's Gamma API once a minute for the top 50 active, open events by 24-hour volume and keeps the answer in memory. `limit` is how many to return, 1 to 50, 20 by default, in volume order.
+
+        An item is an `event_id`, `slug` and `title`, its `volume_24h_usd`, its all-time `volume_total_usd` (`null` when Polymarket sends none) and `liquidity_usd`, its `end_date` (RFC 3339 as Polymarket writes it, or `null` when the event has none) and its `markets`. A market is a `question` and `outcome_prices`, the current price of each outcome in order (for a Yes or No market, Yes first), each from 0 to 1. A market that has closed is left out, an event lists at most 10 markets, and an unreadable price list becomes an empty one. **The dollar amounts are plain JSON numbers**, because this is a live feed and not ledger data.
+
+        `fetched_at` is when the copy was taken, to whole seconds in UTC. `stale` is `true` when the last poll failed and this is the last good copy, and the response then also has `X-Sona-Cache: stale`. `source` is always `polymarket-gamma`. The answer has no `coverage` object and no `Sona-*` stamp headers.
+
+        Errors: 400 `invalid_query` for a `limit` that is not a whole number from 1 to 50. 503 `upstream_unavailable` before the first poll has worked, with `Retry-After` 10. 504 `deadline_exceeded` only when `Sona-Deadline-Ms` is 0 or less.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: |
+            The most events to return, from 1 to 50. The default is 20. Anything that is not a whole number in that range answers 400 `invalid_query`.
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+          examples:
+            default: {summary: The default, value: 20}
+            small: {summary: A short list, value: 2}
+        - $ref: '#/components/parameters/DeadlineMs'
+      responses:
+        "200":
+          description: The feed has been polled at least once. The body is the list of events.
+          headers: &liveHeaders
+            X-Sona-Cache: {$ref: '#/components/headers/SonaCacheStale'}
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PmTopMarkets'}
+              examples:
+                two:
+                  summary: The two busiest events (limit=2)
+                  value: {"kind": "pm_top_markets", "items": [{"event_id": "1109542", "slug": "ucl-atm-mnu-2026-10-13", "title": "Club Atletico de Madrid vs. Manchester United FC", "volume_24h_usd": 4115173.31, "volume_total_usd": 4199141.12, "liquidity_usd": 7916220.44, "end_date": "2026-10-13T19:00:00Z", "markets": [{"question": "Will Club Atletico de Madrid win on 2026-10-13?", "outcome_prices": [0.535, 0.465]}]}, {"event_id": "1109600", "slug": "open-ended", "title": "An event without an end date", "volume_24h_usd": 900.5, "volume_total_usd": null, "liquidity_usd": 10, "end_date": null, "markets": []}], "fetched_at": "2026-10-13T18:30:00Z", "stale": false, "source": "polymarket-gamma"}
+        "400":
+          $ref: '#/components/responses/BadRequest'
+          description: '`limit` is not a whole number from 1 to 50 (`invalid_query`).'
+        "500": {$ref: '#/components/responses/Internal'}
+        "503":
+          $ref: '#/components/responses/LiveUnavailable'
+          description: The first poll of Polymarket has not worked yet (`upstream_unavailable`). `Retry-After` and `retry_after_s` are both 10 (seconds).
+        "504": {$ref: '#/components/responses/DeadlineExceeded'}
+  /internal/v1/pm/trades/large:
+    get:
+      operationId: getLargeTrades
+      tags: [Live]
+      summary: Get recent large Polymarket trades
+      description: |
+        Call this to see the latest big trades on Polymarket. The service polls Polymarket's Data API once a minute for the newest 200 trades worth at least $10,000 and keeps them in memory. `limit` is how many to return, 1 to 100, 50 by default, newest first. `min_usd` raises the floor above $10,000 and filters the kept trades, so it cannot go lower than the poll's own floor.
+
+        An item has the transaction hash `tx` (several fills can share one), the `time` of the trade (RFC 3339 in UTC), the `wallet` that traded (Polymarket's proxy wallet), the market `question`, the `side` (`BUY` or `SELL`), the `outcome` that was traded, and `size` in shares, `price` per share from 0 to 1 and `usd`, which is `size` times `price` rounded to cents. **The amounts are plain JSON numbers**, because this is a live feed and not ledger data.
+
+        `fetched_at`, `stale` and the `X-Sona-Cache: stale` header work as on the top markets route. `source` is always `polymarket-data`. With a high `min_usd` the list may be empty, because only the newest 200 trades of $10,000 or more are kept.
+
+        Errors: 400 `invalid_query` for a `limit` outside 1 to 100 or a `min_usd` that is not a number of at least 10000. 503 `upstream_unavailable` before the first poll has worked, with `Retry-After` 10. 504 `deadline_exceeded` only when `Sona-Deadline-Ms` is 0 or less.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: |
+            The most trades to return, from 1 to 100. The default is 50. Anything that is not a whole number in that range answers 400 `invalid_query`.
+          schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+          examples:
+            default: {summary: The default, value: 50}
+            small: {summary: A short list, value: 2}
+        - name: min_usd
+          in: query
+          required: false
+          description: |
+            The smallest trade to return, in US dollars, as a number of at least 10000 (and at most 1000000000000). The default is 10000. A smaller or unreadable value answers 400 `invalid_query`.
+          schema: {type: number, minimum: 10000, maximum: 1000000000000, default: 10000}
+          examples:
+            default: {summary: The default floor, value: 10000}
+            whales: {summary: Only trades of 50 thousand dollars or more, value: 50000}
+        - $ref: '#/components/parameters/DeadlineMs'
+      responses:
+        "200":
+          description: The feed has been polled at least once. The body is the list of trades, which may be empty.
+          headers: *liveHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PmLargeTrades'}
+              examples:
+                two:
+                  summary: The two newest large trades (limit=2)
+                  value: {"kind": "pm_large_trades", "items": [{"tx": "0x3db3131c0c9674d312cbf871ed607837098862704501a2510a5ced86f143224f", "time": "2026-10-13T18:29:57Z", "wallet": "0x0f6f76ced62a911bccef92f50faaff143854d977", "question": "Will PSV win on 2026-10-13?", "side": "BUY", "outcome": "Yes", "size": 70000, "price": 0.19, "usd": 13300}, {"tx": "0x35ebc3d9fc2033c74ea27f9e7b96b8baf6085a9c6b9fc0a2d1e5d0ff5bd6c1c2", "time": "2026-10-13T18:29:57Z", "wallet": "0x5815db9fdf0e0ffdc1d1f759916b221339570ae7", "question": "Spread: FC Barcelona (-1.5)", "side": "BUY", "outcome": "Galatasaray SK", "size": 20683.384694, "price": 0.4834798631, "usd": 10000}], "fetched_at": "2026-10-13T18:30:00Z", "stale": false, "source": "polymarket-data"}
+        "400":
+          $ref: '#/components/responses/BadRequest'
+          description: '`limit` is not a whole number from 1 to 100, or `min_usd` is not a number of at least 10000 (`invalid_query`).'
+        "500": {$ref: '#/components/responses/Internal'}
+        "503":
+          $ref: '#/components/responses/LiveUnavailable'
+          description: The first poll of Polymarket has not worked yet (`upstream_unavailable`). `Retry-After` and `retry_after_s` are both 10 (seconds).
+        "504": {$ref: '#/components/responses/DeadlineExceeded'}
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [Operations]
+      summary: Check that the process is alive
+      description: |
+        The liveness probe. It answers 200 with an empty body as long as the process runs, whether or not a database is loaded. Use it to tell a process that is down from one that is up but has nothing to serve, which is what `/readyz` reports. It sends `X-Request-Id` but no `Sona-*` header.
+      responses:
+        "200":
+          description: The process is running. The body is empty.
+          headers:
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
+  /readyz:
+    get:
+      operationId: getReady
+      tags: [Operations]
+      summary: Check that the service can answer requests
+      description: |
+        The readiness probe. It answers 200 while a valid database is open and 503 while there is none: the first build has not finished, or the file is not a DuckDB database. The service checks for a new or replaced file every 10 seconds, so a probe turns 200 within one check of a valid file appearing. The body is empty in both cases, and unlike the data routes a 503 here has no problem body and no `Retry-After`. It sends `X-Request-Id` but no `Sona-*` header.
+      responses:
+        "200":
+          description: A database is open and the service can answer requests. The body is empty.
+          headers:
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
+        "503":
+          description: No valid database is open. The data routes answer 503 too. The body is empty.
+          headers:
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
+components:
+  parameters:
+    Wallet:
+      name: wallet
+      in: path
+      required: true
+      description: |
+        The wallet to read: `0x` followed by 40 hex digits, in upper, lower or mixed case. The service lowercases it and does not check the EIP-55 capitals. The `0X` prefix with a capital X is not accepted. The answer carries the lowercase form. It is part of the path, so there is no default.
+      schema: {$ref: '#/components/schemas/AddressAnyCase'}
+      examples:
+        golden: {summary: A wallet with 11 resolved markets, value: "0x467ecfc0c6265683e90899C41881c0431bDEE2ed"}
+        rated: {summary: A rated wallet, value: "0x6326fC8A7361717B3926287f2998c91ee4fAADE2"}
+        flagged: {summary: A wallet with flagged trades, value: "0x0ef286b836e4efa2aa3403cfba1baa6c54d8e986"}
+    Board:
+      name: board
+      in: path
+      required: true
+      description: |
+        Which leaderboard to read: `pnl` (net profit), `volume` (USDC volume) or `skill` (the lower bound of the forecasting edge, rated wallets only), in lowercase. It is part of the path, so there is no default.
+      schema: {type: string, enum: [pnl, volume, skill]}
+      examples:
+        pnl: {summary: Ranked by net profit, value: pnl}
+        volume: {summary: Ranked by volume, value: volume}
+        skill: {summary: Ranked by skill, value: skill}
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: |
+        The most rows to return, from 1 to 100. The default is 50. Anything that is not a whole number in that range answers 400 `invalid_query`.
+      schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+      examples:
+        default: {summary: The default page, value: 50}
+        small: {summary: A short page, value: 3}
+    Offset:
+      name: offset
+      in: query
+      required: false
+      description: |
+        How many rows to skip, from 0 to 10000. The default is 0. The first row of the answer has the rank `offset + 1`. Anything that is not a whole number in that range answers 400 `invalid_query`. A value past the end of the board gives an empty page and not an error.
+      schema: {type: integer, minimum: 0, maximum: 10000, default: 0}
+      examples:
+        first: {summary: The first page, value: 0}
+        second: {summary: The second page of 50, value: 50}
+    Horizon:
+      name: horizon
+      in: query
+      required: false
+      description: |
+        How long before a market resolved to take its price: `4h`, `12h`, `1d` or `1w`. The default is `12h`, the horizon that the skill ratings use. Anything else answers 400 `invalid_query`.
+      schema: {type: string, enum: [4h, 12h, 1d, 1w], default: 12h}
+      examples:
+        default: {summary: Twelve hours, value: 12h}
+        week: {summary: One week, value: 1w}
+    MarketKind:
+      name: market_kind
+      in: query
+      required: false
+      description: |
+        Which markets to count: `other` (ordinary markets with question text), `updown` (short Up or Down markets), `unknown` (markets without question text) or `all`. The default is `other`. Anything else answers 400 `invalid_query`.
+      schema: {type: string, enum: [other, updown, unknown, all], default: other}
+      examples:
+        default: {summary: Ordinary markets, value: other}
+        all: {summary: Every kind, value: all}
+    DeadlineMs:
+      name: Sona-Deadline-Ms
+      in: header
+      required: false
+      description: |
+        The most time, in milliseconds, that this call may take. The default is 5000, used when the header is absent or is not a whole number (`abc` and `1.5` are ignored). When the time runs out before the database has answered, the call ends with 504 `deadline_exceeded`. A value of 0 or less answers 504 straight away without reading anything. The HTTP server's own write timeout is 10 s, so a budget above 10000 cannot be used in full. `sona-api` fills this header in itself with the time it has left.
+      schema: {type: integer, format: int64}
+      examples:
+        default: {summary: The default budget of 5 s, value: 5000}
+        short: {summary: Wait at most 400 ms, value: 400}
+  headers:
+    SonaFinality:
+      description: |
+        How settled the data is. It is always `finalized`, because the history ends at a block that is long final. It is present on every successful data answer and absent from errors and probes.
+      required: true
+      schema: {type: string, enum: [finalized]}
+      example: finalized
+    SonaBlock:
+      description: |
+        The Polygon block number that the data goes through, as a decimal integer. It is `85948288` for every answer, the last block of the dataset. It is the same as `coverage.through.block` in the body and is absent from errors and probes.
+      required: true
+      schema: {type: integer, minimum: 0}
+      example: 85948288
+    SonaBlockTime:
+      description: |
+        The timestamp of that block as Unix time in whole seconds (UTC). It is `1777016620` for every answer, which is 2026-04-24T07:43:40Z, the same instant as `coverage.through.time` in the body. It is absent from errors and probes.
+      required: true
+      schema: {type: integer, minimum: 0}
+      example: 1777016620
+    RequestId:
+      description: |
+        A random 16-digit hex id that identifies this one request in the service log. Quote it when you report a problem. It is present on every answer, including the probes and the errors.
+      required: true
+      schema: {type: string, pattern: '^[0-9a-f]{16}$'}
+      example: 9f3a1c07be52d684
+    NoStore:
+      description: |
+        Always `no-store` on an error answer. It tells caches not to keep a problem, because the same request may succeed a moment later. Successful answers carry no `Cache-Control`.
+      required: true
+      schema: {type: string, enum: [no-store]}
+      example: no-store
+    RetryAfter:
+      description: |
+        How many whole seconds to wait before you send the request again. It is always `1` and is present on 503 data answers.
+      required: true
+      schema: {type: integer, enum: [1]}
+      example: 1
+    SonaCacheStale:
+      description: |
+        Present on a live answer, with the value `stale`, only when the last poll of Polymarket failed and the body is the last good copy. The body says the same in `stale`.
+      required: false
+      schema: {type: string, enum: [stale]}
+      example: stale
+    LiveRetryAfter:
+      description: |
+        How many whole seconds to wait before you send the request again. It is always `10` on the 503 of a live route, because the poller runs once a minute.
+      required: true
+      schema: {type: integer, enum: [10]}
+      example: 10
+  responses:
+    BadRequest:
+      description: The request is not valid. The code is `invalid_id` for a wallet or board in the path and `invalid_query` for a query parameter. Each route says what it accepts.
+      headers: &problemHeaders
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+        X-Request-Id: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/problem+json:
+          schema: {allOf: [{$ref: '#/components/schemas/Problem'}, {properties: {code: {enum: [invalid_id, invalid_query]}}}]}
+    NotFound:
+      description: Nothing is there (`not_found`). That is a wallet with no fills, and also a path or method that no route serves, which has the detail `No such route.`.
+      headers: *problemHeaders
+      content:
+        application/problem+json:
+          schema: {allOf: [{$ref: '#/components/schemas/Problem'}, {properties: {code: {enum: [not_found]}}}]}
+    Internal:
+      description: The service failed in a way it has no name for (`internal`). It is not worth retrying until the cause is fixed. Report the `X-Request-Id`, because the cause is in the service log under that id. The body never holds the cause.
+      headers: *problemHeaders
+      content:
+        application/problem+json:
+          schema: {allOf: [{$ref: '#/components/schemas/Problem'}, {properties: {code: {enum: [internal]}}}]}
+    Unavailable:
+      description: The service has no database to read (`upstream_unavailable`). No valid database file exists yet, because the first build has not finished or the file is not a DuckDB database. The service looks again every 10 seconds, so retry. `Retry-After` and `retry_after_s` are both 1 (second).
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+        Retry-After: {$ref: '#/components/headers/RetryAfter'}
+        X-Request-Id: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/problem+json:
+          schema: {allOf: [{$ref: '#/components/schemas/Problem'}, {properties: {code: {enum: [upstream_unavailable]}}}, {required: [retry_after_s]}]}
+    LiveUnavailable:
+      description: The first poll of Polymarket has not worked yet (`upstream_unavailable`). `Retry-After` and `retry_after_s` are both 10 (seconds).
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+        Retry-After: {$ref: '#/components/headers/LiveRetryAfter'}
+        X-Request-Id: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/problem+json:
+          schema: {allOf: [{$ref: '#/components/schemas/Problem'}, {properties: {code: {enum: [upstream_unavailable]}, retry_after_s: {enum: [10]}}}, {required: [retry_after_s]}]}
+    DeadlineExceeded:
+      description: The time budget ran out (`deadline_exceeded`). Either the database had not answered within `Sona-Deadline-Ms` (5000 ms when the header is absent), or the header was 0 or less. Retry, with a larger budget if the call is a slow one.
+      headers: *problemHeaders
+      content:
+        application/problem+json:
+          schema: {allOf: [{$ref: '#/components/schemas/Problem'}, {properties: {code: {enum: [deadline_exceeded]}}}]}
+  schemas:
+    Address:
+      type: string
+      description: A 20-byte address written as `0x` followed by 40 lowercase hex digits.
+      pattern: '^0x[0-9a-f]{40}$'
+      examples: ["0x467ecfc0c6265683e90899c41881c0431bdee2ed"]
+    AddressAnyCase:
+      type: string
+      description: A 20-byte address written as `0x` followed by 40 hex digits. A request may use uppercase, lowercase or mixed letters. The service treats it as lowercase and does not check the EIP-55 capitals.
+      pattern: '^0x[0-9a-fA-F]{40}$'
+      examples: ["0x467ecfc0c6265683e90899C41881c0431bDEE2ed"]
+    Hash32:
+      type: string
+      description: A 32-byte hash written as `0x` followed by 64 lowercase hex digits. A market's condition id has this form.
+      pattern: '^0x[0-9a-f]{64}$'
+      examples: ["0xc0d117acf059a4870b116b50732020883e24dfc3577249ff37a74c6ce77d1f4d"]
+    Time:
+      type: string
+      format: date-time
+      description: A point in time in RFC 3339 format in UTC, to whole seconds, ending in `Z`.
+      examples: ["2025-07-09T04:21:12Z"]
+    Ratio:
+      type: number
+      minimum: 0
+      maximum: 1
+      description: A share or probability from 0 to 1.
+    Amount:
+      description: An amount of USDC (dollars) or of outcome shares, given both exactly and in a readable form.
+      type: object
+      additionalProperties: false
+      required: [raw, decimals, symbol, value]
+      properties:
+        raw:
+          type: string
+          pattern: '^-?(0|[1-9][0-9]*)$'
+          description: The exact amount in millionths of the unit, as a signed decimal string. For example `-16628825094` is a loss of $16,628.825094.
+          examples: ["716582888996"]
+        decimals:
+          type: integer
+          enum: [6]
+          description: How many decimal places the unit has, so `value` is `raw` divided by 10 to the power of `decimals`. It is always 6.
+        symbol:
+          type: string
+          enum: [USDC, shares]
+          description: '`USDC` for money in dollars and `shares` for outcome shares.'
+        value:
+          type: string
+          pattern: '^-?(0|[1-9][0-9]*)(\.[0-9]*[1-9])?$'
+          description: The amount in whole units as an exact decimal string, without trailing zeros. Zero is `0`. For a `raw` of `716582888996` it is `716582.888996`.
+          examples: ["716582.888996"]
+    Coverage:
+      description: What period the data covers, where it comes from and the notices that must go with it.
+      type: object
+      additionalProperties: false
+      required: [note, through, revision, attribution, license_url, modified, source_url]
+      properties:
+        note:
+          type: string
+          description: A plain-language statement of the period covered and of what is left out.
+        through:
+          type: object
+          additionalProperties: false
+          required: [block, time]
+          description: The last Polygon block of the data.
+          properties:
+            block:
+              type: integer
+              description: The block number, `85948288`.
+            time:
+              description: The time of that block, `2026-04-24T07:43:40Z`.
+              $ref: '#/components/schemas/Time'
+        revision:
+          type: string
+          pattern: '^[0-9a-f]{40}$'
+          description: The commit of the source dataset that was read. It is pinned, so a rebuild reads the same data.
+        attribution:
+          type: string
+          description: The credit line that must be shown with the data.
+        license_url:
+          type: string
+          format: uri
+          description: The licence of the source data, Creative Commons Attribution 4.0.
+        modified:
+          type: string
+          description: The notice that Sona changed the source rows and is not affiliated with Polymarket or Envio.
+        source_url:
+          type: string
+          format: uri
+          description: The page of the source dataset.
+    Problem:
+      description: An error in the RFC 9457 `application/problem+json` format. Switch on `code`; the text fields are for people.
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          description: A URN that identifies the kind of error, `urn:sona:problem:` followed by the `code`.
+          examples: ["urn:sona:problem:not_found"]
+        title:
+          type: string
+          description: A short, fixed, human-readable name for the kind of error.
+          examples: [Not found]
+        status:
+          type: integer
+          description: The HTTP status code of the answer, repeated in the body.
+          examples: [404]
+        detail:
+          type: string
+          description: A sentence explaining what went wrong for this request. The wording may change, so do not parse it.
+          examples: [Nothing was found for this identifier.]
+        instance:
+          type: string
+          description: The path of the request that failed.
+          examples: ["/internal/v1/traders/0x1234567890123456789012345678901234567890"]
+        code:
+          type: string
+          description: |
+            The stable machine-readable reason. `invalid_id` the wallet or board in the path is not valid; `invalid_query` a query parameter is not accepted; `not_found` nothing is there; `internal` an unexpected failure; `upstream_unavailable` no database is loaded; `deadline_exceeded` it was too slow.
+          enum:
+            - invalid_id
+            - invalid_query
+            - not_found
+            - internal
+            - upstream_unavailable
+            - deadline_exceeded
+        retry_after_s:
+          type: integer
+          minimum: 1
+          description: How many whole seconds to wait before retrying. Present on `upstream_unavailable`, and equal to the `Retry-After` header.
+          examples: [1]
+    PmStatus:
+      description: The state of the loaded database.
+      type: object
+      additionalProperties: false
+      required: [kind, ready, built_at, rules_version, totals, coverage]
+      properties:
+        kind:
+          type: string
+          enum: [pm_status]
+          description: Always `pm_status`. It names the shape of this object.
+        ready:
+          type: boolean
+          description: Always `true` in an answer, because a service without a database answers 503.
+        built_at:
+          type: string
+          format: date-time
+          description: When the build published this file, in UTC to the millisecond.
+          examples: ["2026-10-12T15:50:55.520Z"]
+        rules_version:
+          type: string
+          description: The version of the rules that computed every figure. It changes whenever a rule changes.
+          examples: [pm-rules-1]
+        totals:
+          type: object
+          additionalProperties: false
+          required: [fills, wallets, rated_wallets, markets, resolved_markets]
+          description: How much the database holds.
+          properties:
+            fills:
+              type: integer
+              minimum: 0
+              description: The fills over all wallets. A match between two wallets is one fill for each, so it counts twice.
+            wallets:
+              type: integer
+              minimum: 0
+              description: The wallets with at least one fill, which are the wallets that have a profile.
+            rated_wallets:
+              type: integer
+              minimum: 0
+              description: The wallets that reached the skill floor of 30 rated markets in at least 3 events.
+            markets:
+              type: integer
+              minimum: 0
+              description: The markets in the database.
+            resolved_markets:
+              type: integer
+              minimum: 0
+              description: The markets that had resolved by the cutoff.
+        coverage: {$ref: '#/components/schemas/Coverage'}
+    PmTrader:
+      description: The full record of one wallet.
+      type: object
+      additionalProperties: false
+      required: [kind, wallet, owner, owner_kind, activity, pnl, skill, wash, coverage]
+      properties:
+        kind:
+          type: string
+          enum: [pm_trader]
+          description: Always `pm_trader`. It names the shape of this object.
+        wallet:
+          description: The wallet, in lowercase.
+          $ref: '#/components/schemas/Address'
+        owner:
+          description: The account that controls the wallet, when Polymarket's wallet registry lists it, and `null` otherwise.
+          oneOf:
+            - $ref: '#/components/schemas/Address'
+            - type: "null"
+        owner_kind:
+          type: [string, "null"]
+          enum: [proxy, safe, null]
+          description: What kind of contract the wallet is, `proxy` or `safe`, and `null` when the registry does not list it.
+        activity:
+          type: object
+          additionalProperties: false
+          required: [fills, markets, volume, buy_volume, taker_fills, taker_volume, first_trade, last_trade]
+          description: What the wallet traded, counted on its own side so that nothing is counted twice.
+          properties:
+            fills:
+              type: integer
+              minimum: 1
+              description: The number of the wallet's own fills.
+            markets:
+              type: integer
+              minimum: 0
+              description: The markets in which the wallet has any event, a fill, a split, a merge, a redemption or a conversion.
+            volume:
+              description: The value of its fills in USDC.
+              $ref: '#/components/schemas/Amount'
+            buy_volume:
+              description: The part of `volume` that was buying.
+              $ref: '#/components/schemas/Amount'
+            taker_fills:
+              type: integer
+              minimum: 0
+              description: The fills in which the wallet's order took liquidity from the book.
+            taker_volume:
+              description: The value of the taker fills in USDC.
+              $ref: '#/components/schemas/Amount'
+            first_trade:
+              description: The time of the first fill.
+              $ref: '#/components/schemas/Time'
+            last_trade:
+              description: The time of the last fill.
+              $ref: '#/components/schemas/Time'
+        pnl:
+          type: object
+          additionalProperties: false
+          required: [realized, gross, fees, biggest_win, resolved_markets, won_markets, win_rate, open_unresolved_positions, final, amm_trades_excluded]
+          description: Lifetime profit and loss in USDC, with settlement of resolved markets and fees taken off.
+          properties:
+            realized:
+              description: The net result, `gross` minus `fees`. Negative for a loss. When `final` is `false` it is the result so far.
+              $ref: '#/components/schemas/Amount'
+            gross:
+              description: The result before fees.
+              $ref: '#/components/schemas/Amount'
+            fees:
+              description: The fees the wallet paid, from 2026-01-06 04:51:15 UTC. Zero before that.
+              $ref: '#/components/schemas/Amount'
+            biggest_win:
+              description: The best net result in any single market, and 0 when it is $1.00 or less.
+              $ref: '#/components/schemas/Amount'
+            resolved_markets:
+              type: integer
+              minimum: 0
+              description: The markets of the wallet that had resolved by the cutoff.
+            won_markets:
+              type: integer
+              minimum: 0
+              description: The resolved markets with a net result above 0. It never exceeds `resolved_markets`.
+            win_rate:
+              type: object
+              additionalProperties: false
+              required: [value, wilson_lower, shown, floor]
+              description: The share of resolved markets that were won, shown only from the floor.
+              properties:
+                value:
+                  type: [number, "null"]
+                  minimum: 0
+                  maximum: 1
+                  description: '`won_markets` divided by `resolved_markets`, to 4 decimals. `null` below the floor.'
+                wilson_lower:
+                  type: [number, "null"]
+                  minimum: 0
+                  maximum: 1
+                  description: The lower bound of the 95% Wilson confidence interval of `value`, to 4 decimals. `null` below the floor.
+                shown:
+                  type: boolean
+                  description: '`true` from the floor of resolved markets, and `false` below it.'
+                floor:
+                  type: integer
+                  description: The number of resolved markets from which the win rate is shown, 30.
+            open_unresolved_positions:
+              type: integer
+              minimum: 0
+              description: The positions in markets that had not resolved by the cutoff. They are not valued.
+            final:
+              type: boolean
+              description: '`true` when the wallet has no open unresolved position, so `realized` will not change.'
+            amm_trades_excluded:
+              type: integer
+              minimum: 0
+              description: The wallet's trades on the old automated market maker, which are not part of the result.
+        skill:
+          type: object
+          additionalProperties: false
+          required: [rated, floor, horizon_hours, markets, events, brier, edge, edge_se, calibration]
+          description: How good the wallet's forecasts were, measured 12 hours before each market resolved.
+          properties:
+            rated:
+              type: boolean
+              description: '`true` from the floor of rated markets and events.'
+            floor:
+              type: object
+              additionalProperties: false
+              required: [markets, events]
+              description: The least a wallet needs to be rated.
+              properties:
+                markets:
+                  type: integer
+                  description: The rated markets needed, 30.
+                events:
+                  type: integer
+                  description: The distinct events needed, 3.
+            horizon_hours:
+              type: integer
+              description: How long before resolution the forecast is taken, 12.
+            markets:
+              type: integer
+              minimum: 0
+              description: The wallet's rated markets, shown also below the floor.
+            events:
+              type: integer
+              minimum: 0
+              description: The distinct events of those markets, shown also below the floor.
+            brier:
+              type: [number, "null"]
+              description: The mean squared gap between forecast and outcome, from 0 to 1, where lower is better. `null` below the floor.
+            edge:
+              type: [number, "null"]
+              description: The mean of outcome minus forecast. Above 0 means the backed outcomes came true more often than the prices paid implied. `null` below the floor.
+            edge_se:
+              type: [number, "null"]
+              minimum: 0
+              description: The standard error of `edge`. `null` below the floor.
+            calibration:
+              type: array
+              description: Five buckets of width 0.2 on the forecast, in order. Empty below the floor.
+              items: {$ref: '#/components/schemas/WalletBucket'}
+        wash:
+          type: object
+          additionalProperties: false
+          required: [scored, score, paired_volume, flagged_volume, flagged_share, algorithm, evidence]
+          description: The wash-trading check.
+          properties:
+            scored:
+              type: boolean
+              description: '`false` for a wallet with no trade against another wallet, which then has no score.'
+            score:
+              type: [number, "null"]
+              minimum: 0
+              maximum: 1
+              description: How strongly the wallet's trading fits the wash pattern, from 0 to 1, after it has been mixed with the scores of its counterparties. `null` when `scored` is `false`.
+            paired_volume:
+              description: The shares the wallet traded against other wallets, on both sides of its fills.
+              $ref: '#/components/schemas/Amount'
+            flagged_volume:
+              description: The part of `paired_volume` in trades that were flagged.
+              $ref: '#/components/schemas/Amount'
+            flagged_share:
+              description: '`flagged_volume` divided by `paired_volume`, and 0 when nothing was paired.'
+              $ref: '#/components/schemas/Ratio'
+            algorithm:
+              type: string
+              enum: [columbia-2]
+              description: The method that flagged the trades, the second algorithm of the Columbia method.
+            evidence:
+              type: object
+              additionalProperties: false
+              required: [counterparties, trades]
+              description: What lies behind the flag. Both lists are empty for a wallet that is not flagged.
+              properties:
+                counterparties:
+                  type: array
+                  maxItems: 5
+                  description: The top 5 counterparties by flagged shares.
+                  items: {$ref: '#/components/schemas/WashCounterparty'}
+                trades:
+                  type: array
+                  maxItems: 20
+                  description: The top 20 flagged trades by shares. Ties go to the earlier trade.
+                  items: {$ref: '#/components/schemas/WashTrade'}
+        coverage: {$ref: '#/components/schemas/Coverage'}
+    WalletBucket:
+      description: One bucket of a wallet's calibration curve.
+      type: object
+      additionalProperties: false
+      required: [lo, hi, markets, mean_forecast, observed]
+      properties:
+        lo:
+          type: number
+          description: The lower end of the forecast range of the bucket.
+        hi:
+          type: number
+          description: The upper end of the forecast range of the bucket. The last bucket includes 1.
+        markets:
+          type: integer
+          minimum: 0
+          description: The rated markets whose forecast fell in the range.
+        mean_forecast:
+          type: number
+          description: The mean forecast of those markets. 0 when there are none.
+        observed:
+          type: number
+          description: The mean outcome of those markets, the share that came true. 0 when there are none.
+    WashCounterparty:
+      description: A wallet that the flagged trades were made against.
+      type: object
+      additionalProperties: false
+      required: [wallet, score, markets, trades, shares]
+      properties:
+        wallet:
+          description: The counterparty, in lowercase.
+          $ref: '#/components/schemas/Address'
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: The wash score of the counterparty.
+        markets:
+          type: integer
+          minimum: 1
+          description: The markets in which the two wallets made flagged trades.
+        trades:
+          type: integer
+          minimum: 1
+          description: The number of flagged trades between the two wallets.
+        shares:
+          description: The flagged shares between the two wallets.
+          $ref: '#/components/schemas/Amount'
+    WashTrade:
+      description: One flagged trade, seen from the side of the wallet in question.
+      type: object
+      additionalProperties: false
+      required: [id, time, market, counterparty, side, outcome, shares, usdc, price]
+      properties:
+        id:
+          type: string
+          pattern: '^137_[0-9]+_[0-9]+$'
+          description: The trade id, `137_<block>_<logIndex>`, so the trade can be found on chain.
+          examples: ["137_71578356_678"]
+        time:
+          description: When the trade happened.
+          $ref: '#/components/schemas/Time'
+        market:
+          type: object
+          additionalProperties: false
+          required: [condition, question]
+          description: The market of the trade.
+          properties:
+            condition:
+              description: The condition id of the market.
+              $ref: '#/components/schemas/Hash32'
+            question:
+              type: [string, "null"]
+              description: The question of the market, and `null` when its text is missing.
+        counterparty:
+          description: The other wallet of the trade, in lowercase.
+          $ref: '#/components/schemas/Address'
+        side:
+          type: string
+          enum: [buy, sell]
+          description: What the wallet in question did, bought or sold.
+        outcome:
+          type: integer
+          enum: [0, 1]
+          description: The outcome of the market that changed hands, 0 or 1.
+        shares:
+          description: The number of shares traded.
+          $ref: '#/components/schemas/Amount'
+        usdc:
+          description: The USDC paid for them.
+          $ref: '#/components/schemas/Amount'
+        price:
+          type: number
+          minimum: 0
+          description: The price per share in USDC, `usdc` divided by `shares`.
+    PmLeaderboard:
+      description: One page of a leaderboard.
+      type: object
+      additionalProperties: false
+      required: [kind, board, limit, offset, total, rows, coverage]
+      properties:
+        kind:
+          type: string
+          enum: [pm_leaderboard]
+          description: Always `pm_leaderboard`. It names the shape of this object.
+        board:
+          type: string
+          enum: [pnl, volume, skill]
+          description: Which board this page is from.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: The page size that was used.
+        offset:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: The number of rows that were skipped.
+        total:
+          type: integer
+          minimum: 0
+          description: The number of wallets on the board, all wallets for `pnl` and `volume` and the rated wallets for `skill`.
+        rows:
+          type: array
+          description: The rows of the page, in rank order. Empty past the end of the board.
+          items: {$ref: '#/components/schemas/LeaderboardRow'}
+        coverage: {$ref: '#/components/schemas/Coverage'}
+    LeaderboardRow:
+      description: One wallet on a leaderboard.
+      type: object
+      additionalProperties: false
+      required: [rank, wallet, fills, markets, volume, realized, final, wash_share, skill]
+      properties:
+        rank:
+          type: integer
+          minimum: 1
+          description: The position on the board, counted from 1. It is `offset` plus the position in the page.
+        wallet:
+          description: The wallet, in lowercase.
+          $ref: '#/components/schemas/Address'
+        fills:
+          type: integer
+          minimum: 1
+          description: The number of the wallet's own fills.
+        markets:
+          type: integer
+          minimum: 0
+          description: The markets in which the wallet has any event.
+        volume:
+          description: The value of its fills in USDC.
+          $ref: '#/components/schemas/Amount'
+        realized:
+          description: The net result in USDC, as in the trader record.
+          $ref: '#/components/schemas/Amount'
+        final:
+          type: boolean
+          description: '`true` when the wallet has no open unresolved position.'
+        wash_share:
+          description: The flagged part of the shares the wallet traded against other wallets, and 0 when it has none.
+          $ref: '#/components/schemas/Ratio'
+        skill:
+          description: The skill figures of a rated wallet, and `null` for a wallet that is not rated.
+          oneOf:
+            - $ref: '#/components/schemas/BoardSkill'
+            - type: "null"
+    BoardSkill:
+      description: The skill figures of a rated wallet.
+      type: object
+      additionalProperties: false
+      required: [markets, events, brier, edge, edge_lb]
+      properties:
+        markets:
+          type: integer
+          minimum: 30
+          description: The rated markets.
+        events:
+          type: integer
+          minimum: 3
+          description: The distinct events of those markets.
+        brier:
+          type: number
+          description: The mean squared gap between forecast and outcome, where lower is better.
+        edge:
+          type: number
+          description: The mean of outcome minus forecast.
+        edge_lb:
+          type: number
+          description: '`edge` minus 1.96 standard errors, the 95% lower bound. The skill board ranks on it, and it can be negative.'
+    PmCalibration:
+      description: How well market prices predicted outcomes.
+      type: object
+      additionalProperties: false
+      required: [kind, horizon_hours, market_kind, markets, brier, buckets, excluded, coverage]
+      properties:
+        kind:
+          type: string
+          enum: [pm_calibration]
+          description: Always `pm_calibration`. It names the shape of this object.
+        horizon_hours:
+          type: integer
+          enum: [4, 12, 24, 168]
+          description: How long before resolution the price is taken, in hours.
+        market_kind:
+          type: string
+          enum: [other, updown, unknown, all]
+          description: Which markets were counted.
+        markets:
+          type: integer
+          minimum: 0
+          description: The markets counted, which is the sum over the buckets.
+        brier:
+          type: [number, "null"]
+          description: The mean squared gap between price and outcome, where lower is better. `null` when no market was counted.
+        buckets:
+          type: array
+          description: Twenty buckets of width 0.05 on the price, in order.
+          items: {$ref: '#/components/schemas/PriceBucket'}
+        excluded:
+          type: object
+          additionalProperties: false
+          required: [no_price]
+          description: What was left out.
+          properties:
+            no_price:
+              type: integer
+              minimum: 0
+              description: The resolved markets of the chosen kind that have no price, because nothing traded before the horizon or the resolution time is unknown.
+        coverage: {$ref: '#/components/schemas/Coverage'}
+    PriceBucket:
+      description: One bucket of the calibration table.
+      type: object
+      additionalProperties: false
+      required: [lo, hi, markets, mean_price, observed]
+      properties:
+        lo:
+          type: number
+          description: The lower end of the price range of the bucket.
+        hi:
+          type: number
+          description: The upper end of the price range of the bucket. The last bucket includes 1.
+        markets:
+          type: integer
+          minimum: 0
+          description: The markets whose price fell in the range.
+        mean_price:
+          type: number
+          description: The mean price of those markets. 0 when there are none.
+        observed:
+          type: number
+          description: The mean outcome of those markets, the share that came true, with a 50-50 resolution counted as one half. 0 when there are none.
+    PmTopMarkets:
+      description: The events with the most trading in the last 24 hours, from the live feed.
+      type: object
+      additionalProperties: false
+      required: [kind, items, fetched_at, stale, source]
+      properties:
+        kind:
+          type: string
+          enum: [pm_top_markets]
+          description: Always `pm_top_markets`. It names the shape of this object.
+        items:
+          type: array
+          description: The events in order of 24-hour volume, highest first.
+          items: {$ref: '#/components/schemas/TopEvent'}
+        fetched_at:
+          $ref: '#/components/schemas/Time'
+        stale:
+          type: boolean
+          description: "`true` when the last poll failed and this is the last good copy."
+        source:
+          type: string
+          enum: [polymarket-gamma]
+          description: Where the data comes from.
+    TopEvent:
+      type: object
+      additionalProperties: false
+      required: [event_id, slug, title, volume_24h_usd, volume_total_usd, liquidity_usd, end_date, markets]
+      properties:
+        event_id:
+          type: string
+          description: Polymarket's id of the event.
+        slug:
+          type: string
+          description: The event's slug, which is the last part of its Polymarket page address.
+        title:
+          type: string
+          description: The event's title.
+        volume_24h_usd:
+          type: number
+          minimum: 0
+          description: The dollars traded in the event in the last 24 hours, as a plain JSON number.
+        volume_total_usd:
+          type: [number, "null"]
+          minimum: 0
+          description: The dollars traded in the event since it opened, as a plain JSON number, or `null` when Polymarket sends none.
+        liquidity_usd:
+          type: number
+          minimum: 0
+          description: The dollars resting in the event's order books, as a plain JSON number.
+        end_date:
+          type: [string, "null"]
+          description: When the event ends, as Polymarket writes it in RFC 3339, or `null` when it has no end date.
+        markets:
+          type: array
+          description: The event's open markets, at most 10, in the order Polymarket lists them.
+          items: {$ref: '#/components/schemas/TopMarket'}
+    TopMarket:
+      type: object
+      additionalProperties: false
+      required: [question, outcome_prices]
+      properties:
+        question:
+          type: string
+          description: The question the market asks.
+        outcome_prices:
+          type: array
+          description: The current price of each outcome in order, each from 0 to 1. Empty when Polymarket's price list could not be read.
+          items: {type: number, minimum: 0, maximum: 1}
+    PmLargeTrades:
+      description: Recent large trades, from the live feed.
+      type: object
+      additionalProperties: false
+      required: [kind, items, fetched_at, stale, source]
+      properties:
+        kind:
+          type: string
+          enum: [pm_large_trades]
+          description: Always `pm_large_trades`. It names the shape of this object.
+        items:
+          type: array
+          description: The trades, newest first.
+          items: {$ref: '#/components/schemas/LargeTrade'}
+        fetched_at:
+          $ref: '#/components/schemas/Time'
+        stale:
+          type: boolean
+          description: "`true` when the last poll failed and this is the last good copy."
+        source:
+          type: string
+          enum: [polymarket-data]
+          description: Where the data comes from.
+    LargeTrade:
+      type: object
+      additionalProperties: false
+      required: [tx, time, wallet, question, side, outcome, size, price, usd]
+      properties:
+        tx:
+          type: string
+          description: The hash of the transaction that carried the trade. Several fills can share one.
+        time:
+          $ref: '#/components/schemas/Time'
+        wallet:
+          type: string
+          description: Polymarket's proxy wallet that traded, as the Data API writes it.
+        question:
+          type: string
+          description: The question of the market that was traded.
+        side:
+          type: string
+          description: "`BUY` or `SELL`, from the point of view of the wallet."
+        outcome:
+          type: string
+          description: The outcome that was bought or sold, such as `Yes`.
+        size:
+          type: number
+          minimum: 0
+          description: The number of shares, as a plain JSON number.
+        price:
+          type: number
+          minimum: 0
+          description: The price of one share in dollars, from 0 to 1.
+        usd:
+          type: number
+          minimum: 0
+          description: "`size` times `price` in dollars, rounded to cents."
