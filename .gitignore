@@ -1,0 +1,28 @@
+# Secrets, copy .env.example to .env for real keys
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Go build and test output
+/bin/
+*.exe
+*.test
+*.out
+coverage.*
+go.work
+go.work.sum
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Build data (DuckDB files and staged Parquet, tens of GB)
+/data/
+
+# Test data too large to commit and local DuckDB files
+testdata/large/
+*.duckdb
+*.duckdb.*

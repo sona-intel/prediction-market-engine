@@ -1,0 +1,28 @@
+services:
+  pm-api:
+    build: { context: ., args: { SERVICE: pm-api } }
+    image: sona/pm-api:dev
+    restart: unless-stopped
+    mem_limit: 384m
+    environment: { GOMEMLIMIT: 150MiB, PM_DB: /data/pm.duckdb }
+    volumes: ["./data:/data:ro"]
+    tmpfs: ["/tmp"]
+    ports: ["127.0.0.1:8191:8080"]
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "3" } }
+    healthcheck:
+      test: ["CMD", "/app", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+      start_interval: 1s
+  pm-build:
+    profiles: [build]
+    build: { context: ., args: { SERVICE: pm-build } }
+    image: sona/pm-build:dev
+    mem_limit: 3g
+    cpus: 3
+    environment: { GOMEMLIMIT: 1000MiB, PM_TEMP_DIR: /tmp/pm }
+    env_file: [{ path: .env, required: false }]
+    volumes: ["./data:/data"]
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "3" } }

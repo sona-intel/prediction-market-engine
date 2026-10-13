@@ -1,0 +1,5 @@
+testdata/large
+data
+.env
+*.duckdb*
+.git
