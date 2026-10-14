@@ -146,17 +146,17 @@ func (p *pruner) PruneSnaps(_ context.Context, before time.Time) (int64, error) 
 
 func TestBuildAddsHousekeepingAndSkipsVenuesWithoutSources(t *testing.T) {
 	p := &pruner{}
-	jobs, err := collect.Build(collect.Config{Venues: []string{"kalshi", "levr"}, KeepDays: 2}, func(string) string { return "" }, nil, p, prometheus.NewRegistry())
-	if err != nil || len(jobs) != 1 || jobs[0].Source.Name() != "housekeeping" {
+	jobs, err := collect.Build(collect.Config{Venues: []string{"nope", "levr"}, KeepDays: 2}, func(string) string { return "" }, nil, p, prometheus.NewRegistry())
+	if err != nil || len(jobs) < 1 || jobs[len(jobs)-1].Source.Name() != "housekeeping" {
 		t.Fatalf("jobs %v, %v", jobs, err)
 	}
-	if err := jobs[0].Source.Poll(t.Context()); err != nil {
+	if err := jobs[len(jobs)-1].Source.Poll(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if age := time.Since(p.before); age < 47*time.Hour || age > 49*time.Hour {
 		t.Fatalf("pruned before %v ago", age)
 	}
-	if len(p.tapes) != 1 || p.tapes[0] != "kalshi" {
+	if len(p.tapes) != 1 || p.tapes[0] != "nope" {
 		t.Fatalf("pruned tapes %v", p.tapes)
 	}
 }
@@ -184,5 +184,25 @@ func TestBuildMakesTheJobsOfHyperliquidAndPolymarketUS(t *testing.T) {
 	env["PM_PMUS_RPS"] = "0"
 	if _, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry()); !errors.Is(err, collect.ErrConfig) {
 		t.Fatalf("zero rate gave %v", err)
+	}
+}
+
+func TestBuildMakesTheJobsOfKalshi(t *testing.T) {
+	env := map[string]string{"PM_KALSHI_EVERY": "7s", "PM_KALSHI_MIN_USD": "2500"}
+	cfg := collect.Config{Venues: []string{"kalshi"}, KeepDays: 2}
+	jobs, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, j := range jobs {
+		names = append(names, j.Source.Name())
+	}
+	if want := []string{"kalshi/trades", "kalshi/markets", "kalshi/settled", "housekeeping"}; !slices.Equal(names, want) || jobs[0].Every != 7*time.Second {
+		t.Fatalf("jobs %v", names)
+	}
+	env["PM_KALSHI_MIN_USD"] = "-1"
+	if _, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry()); !errors.Is(err, collect.ErrConfig) {
+		t.Fatalf("negative floor gave %v", err)
 	}
 }

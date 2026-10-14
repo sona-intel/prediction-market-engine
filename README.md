@@ -59,3 +59,13 @@ The gateway has no trade tape, so three jobs share one request limiter (`PM_PMUS
 - `settlement` checks markets past their end date each `PM_PMUS_SETTLE_EVERY` (10m) and records the `settlement` flag, with `yes` meaning the long side won. The quote's `settlementPx` also shows on open markets, so it is not used.
 
 Fixtures for both venues are in `testdata/venues` with the recorder that wrote them.
+
+### Kalshi
+
+The keyless API publishes no trader ids, so Kalshi gets market data and large prints only, and its tape is pruned after `PM_SNAP_KEEP_DAYS`. Three jobs share one limiter (`PM_KALSHI_RPS`, 2) and the 429 backoff, since Kalshi sends no Retry-After.
+
+- `markets` sweeps every open market with `mve_filter=exclude` each `PM_KALSHI_MARKETS_EVERY` (10m), about 60 pages of 1,000, and snapshots the `PM_KALSHI_TOP` (500) with the most 24 hour volume. Price is the last trade, or the middle of the book when nothing has traded. Volume and open interest are contract counts, which equal notional dollars. Markets missing from a full sweep are marked closed.
+- `trades` reads `/markets/trades` each `PM_KALSHI_EVERY` (10s), about 165 prints a second, rewinds the cursor 5 seconds so late prints are caught, and keeps prints that cost the taker at least `PM_KALSHI_MIN_USD` (10,000, the same constant as the Polymarket live feed). The side column is the taker side (yes or no), and combo tickers (`KXMVE`) are dropped as the market sweep excludes them. A poll that hits its 30 page cap counts a gap in `pm_kalshi_gaps_total`.
+- `settled` copies results of markets settled since the last poll (`PM_KALSHI_SETTLE_EVERY`, 5m) onto markets already recorded.
+
+The `/historical` stitch is not built, so history starts at deploy.
