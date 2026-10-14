@@ -16,7 +16,7 @@ The Polymarket US part waits 3 seconds between requests because the gateway answ
 | `hl_outcomemeta.json` | `POST api.hyperliquid.xyz/info {"type":"outcomeMeta"}`. The first three outcomes with a tape are kept, and `questions` and `deployers` are emptied. |
 | `hl_recenttrades.json` | `{"type":"recentTrades","coin":"#111210"}`, the side-0 coin of the first outcome with at least 6 trades. The newest 6 rows are kept. |
 | `hl_recenttrades_side1.json` | The same for the mirror coin `#111211`. Every row has a twin in the side-0 file with the same hash, time and size, the other side, a price that sums to 1 and the two wallets swapped. |
-| `hl_userfills.json` | `{"type":"userFills","user":<wallet>}` for the first trader of the busiest outcome who held a Yes coin and a No coin at settlement. Four whole fills are kept, one Settlement on a Yes coin, one on a No coin, a Buy and a Sell. Running the whole hip4 target again rewrites every HIP-4 file with the tape of that day. |
+| `hl_userfills.json` | `{"type":"userFills","user":<wallet>}` for the first trader of the busiest outcome who has a Settlement fill on a coin ending 0 and on one ending 1. Four whole fills are kept, one Settlement on a Yes coin, one on a No coin, a Buy and a Sell. Running the whole hip4 target again rewrites every HIP-4 file with the tape of that day. |
 | `hl_ws_trades.json` | The first `trades` message after subscribing to `#111210` on `wss://api.hyperliquid.xyz/ws`, which is the snapshot of recent trades. The newest 6 rows are kept. |
 
 ## Polymarket US

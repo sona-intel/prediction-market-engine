@@ -28,7 +28,10 @@ const (
 	stopTimeout   = 10 * time.Second
 )
 
-var errUsage = errors.New("usage: pm-collect [serve | migrate | healthcheck]")
+var (
+	errUsage     = errors.New("usage: pm-collect [serve | migrate | healthcheck | once <job>]")
+	errNoSuchJob = errors.New("no such job")
+)
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -51,6 +54,12 @@ func run(ctx context.Context, args []string, get func(string) string) error {
 	cmd := "serve"
 	if len(args) > 0 {
 		cmd = args[0]
+	}
+	if cmd == "once" {
+		if len(args) != 2 {
+			return errUsage
+		}
+		return once(ctx, get, args[1])
 	}
 	if len(args) > 1 {
 		return errUsage
@@ -85,6 +94,28 @@ func migrate(ctx context.Context, get func(string) string) error {
 	}
 	defer st.Close()
 	return st.Migrate(ctx)
+}
+
+// once polls one job a single time, named as the scheduler logs it such as hyperliquid/wallets, for runs by hand
+func once(ctx context.Context, get func(string) string, name string) error {
+	st, cfg, err := connect(ctx, get)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		return err
+	}
+	jobs, err := collect.Build(cfg, get, st, st, prometheus.NewRegistry())
+	if err != nil {
+		return err
+	}
+	for _, j := range jobs {
+		if j.Source.Name() == name {
+			return j.Source.Poll(ctx)
+		}
+	}
+	return fmt.Errorf("%w: %s", errNoSuchJob, name)
 }
 
 func serve(ctx context.Context, get func(string) string) error {

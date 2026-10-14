@@ -50,6 +50,11 @@ Tests that need Postgres skip when `PM_TEST_PG` is unset. Settings are `PM_PG_UR
 
 One WebSocket connection follows every outcome and subscribes to side 0 only, because the two sides of an outcome carry the same fills mirrored (same hash, time and size, prices that sum to 1, wallets swapped). On the live feed 5,135 of 5,135 side-0 fills had exactly one twin on side 1. The outcome list is re-read every `PM_HL_META_EVERY` (5m), and outcomes that leave it are unsubscribed and marked closed. After a restart or reconnect, `recentTrades` is called once per coin that had a stored tape, paced to `PM_HL_GAP_WEIGHT` weight a minute (300), and a gap is counted when that page starts after the newest stored trade. The count is `pm_hip4_gaps_total` and the `hyperliquid/gaps` cursor. Rows with a price outside 0 to 1, a bad wallet or an odd size are skipped and counted in `pm_hip4_trades_skipped_total`. `PM_HL_URL` overrides the host.
 
+Two more jobs turn the tape into results and wallet totals.
+
+- `settlement` (every `PM_HL_SETTLE_EVERY`, 5m, at most `PM_HL_SETTLE_BATCH`, 10 outcomes a run) handles outcomes that left the live list. The venue shows a settlement only as a `Settlement` fill in the wallets that held the outcome, so it asks the 4 newest traders of the outcome for `userFillsByTime` since its last trade and reads the price of that fill (a No-coin fill gives the Yes payout as one minus it). The result is `yes`, `no` or the fraction, with the time of the fill stored as `settled_ts`. An outcome with no settlement fill is asked again after an hour.
+- `wallets` (every `PM_HL_WALLETS_EVERY`, 10m) replays the whole tape into one `pnl.Ledger` per wallet and writes `hl_wallet`. A buyer of the Yes coin who holds No closes that No, and a seller who holds Yes closes it, and any rest opens the opposite side at the complementary price, which leaves the same profit at settlement. Volume is the traded dollar amount of each fill, fees are zero, and gross PnL counts only realized profit and settled markets. Skill is rated with `skill.Forecast` on question-type outcomes only (sports, award, policy rate and IPO kinds, not recurring price outcomes or fallbacks), with each outcome counted as its own event because the recorded markets carry no question id.
+
 ### Polymarket US
 
 The gateway has no trade tape, so three jobs share one request limiter (`PM_PMUS_RPS`, 0.4), since it answers 429 with Retry-After above about half a request a second across all paths.
@@ -69,3 +74,17 @@ The keyless API publishes no trader ids, so Kalshi gets market data and large pr
 - `settled` copies results of markets settled since the last poll (`PM_KALSHI_SETTLE_EVERY`, 5m) onto markets already recorded.
 
 The `/historical` stitch is not built, so history starts at deploy.
+
+### Levr Bet
+
+Positions, redemptions, liquidations and game settlements come from the unofficial Subsquid GraphQL, which the venue does not document. One job (`levr/positions`, every `PM_LEVR_EVERY`, 60s) walks the tables in a fixed order, opened first, and keeps a cursor per table in the `cursor` table (event ids sort by block). A table that errors is skipped and counted in `pm_levr_table_errors_total`, and the poll fails only when every table does. The over/under tables exist but hold no rows today.
+
+What the real rows give:
+
+- `MarketSettled` carries only the winner (1, 2, 3 for a draw, 0 for a cancelled game) and no payout. It sets the market result.
+- The payout comes from `PositionRedeemed`, which carries `profit`, `loss` and the borrow and balance fees. Payout is stake plus profit less loss, those fees and the opening `positionFee`. On the newest redemption it lands within a micro-USDC of the venue's own `totalPayout`.
+- A losing position is never redeemed. Most are liquidated before the game ends, and the rest simply stay open on the venue, so settling a game closes the open positions of the other side as lost. Both realize the whole stake as a loss, since the venue's own aggregate shows a zero payout for each.
+- A redemption of a cancelled game has no profit and the refund is not published, so the position is `void` with no payout and a PnL of zero.
+- Leverage is position size over stake. Entry and liquidation prices are the venue's own, in ppm.
+
+Without `PM_LEVR_BACKFILL=1` the first poll reads only the last `PM_LEVR_LOOKBACK` (24h) of each table, and closes of positions older than that are counted in `pm_levr_orphans_total`. The backfill is about 40,000 rows and is meant for the server. `levr/wallets` rebuilds the `levr_wallet` totals from the positions every `PM_LEVR_WALLETS_EVERY` (10m), and the liquidation rate and win rate use positions that ended in a win, a loss or a liquidation.

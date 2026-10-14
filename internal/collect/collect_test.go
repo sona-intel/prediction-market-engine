@@ -13,6 +13,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"pm/internal/collect"
+	"pm/internal/hip4"
+	"pm/internal/levr"
+	"pm/internal/venue"
+	"pm/internal/venue/venuetest"
 )
 
 type fake struct {
@@ -146,7 +150,7 @@ func (p *pruner) PruneSnaps(_ context.Context, before time.Time) (int64, error) 
 
 func TestBuildAddsHousekeepingAndSkipsVenuesWithoutSources(t *testing.T) {
 	p := &pruner{}
-	jobs, err := collect.Build(collect.Config{Venues: []string{"nope", "levr"}, KeepDays: 2}, func(string) string { return "" }, nil, p, prometheus.NewRegistry())
+	jobs, err := collect.Build(collect.Config{Venues: []string{"nope"}, KeepDays: 2}, func(string) string { return "" }, nil, p, prometheus.NewRegistry())
 	if err != nil || len(jobs) < 1 || jobs[len(jobs)-1].Source.Name() != "housekeeping" {
 		t.Fatalf("jobs %v, %v", jobs, err)
 	}
@@ -161,10 +165,34 @@ func TestBuildAddsHousekeepingAndSkipsVenuesWithoutSources(t *testing.T) {
 	}
 }
 
+// holdsHIP4 adds the settlement and wallet methods to the in-memory sink
+type holdsHIP4 struct {
+	*venuetest.Mem
+}
+
+func (holdsHIP4) UnsettledClosed(context.Context, string, int) ([]string, error) { return nil, nil }
+
+func (holdsHIP4) LastTraders(context.Context, string, string, int) ([][]byte, error) {
+	return nil, nil
+}
+
+func (holdsHIP4) SettleMarket(context.Context, string, string, string, time.Time) error {
+	return nil
+}
+
+func (holdsHIP4) EachTrade(context.Context, string, time.Time, func(venue.Trade) error) error {
+	return nil
+}
+
+func (holdsHIP4) MarketResults(context.Context, string) ([]hip4.MarketInfo, error) { return nil, nil }
+
+func (holdsHIP4) UpsertHLWallets(context.Context, []hip4.Wallet) error { return nil }
+
 func TestBuildMakesTheJobsOfHyperliquidAndPolymarketUS(t *testing.T) {
 	env := map[string]string{"PM_PMUS_TOP": "7", "PM_PMUS_EVERY": "3m"}
 	cfg := collect.Config{Venues: []string{"hyperliquid", "polymarket-us"}, KeepDays: 2}
-	jobs, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry())
+	st := holdsHIP4{venuetest.New()}
+	jobs, err := collect.Build(cfg, func(k string) string { return env[k] }, st, &pruner{}, prometheus.NewRegistry())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,17 +200,17 @@ func TestBuildMakesTheJobsOfHyperliquidAndPolymarketUS(t *testing.T) {
 	for _, j := range jobs {
 		names = append(names, j.Source.Name())
 	}
-	want := []string{"hyperliquid/stream", "polymarket-us/quotes", "polymarket-us/catalogue", "polymarket-us/settlement", "housekeeping"}
-	if !slices.Equal(names, want) || jobs[1].Every != 3*time.Minute {
+	want := []string{"hyperliquid/stream", "hyperliquid/settlement", "hyperliquid/wallets", "polymarket-us/quotes", "polymarket-us/catalogue", "polymarket-us/settlement", "housekeeping"}
+	if !slices.Equal(names, want) || jobs[3].Every != 3*time.Minute {
 		t.Fatalf("jobs %v", names)
 	}
 	env["PM_HL_GAP_WEIGHT"] = "0"
-	if _, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry()); !errors.Is(err, collect.ErrConfig) {
+	if _, err := collect.Build(cfg, func(k string) string { return env[k] }, st, &pruner{}, prometheus.NewRegistry()); !errors.Is(err, collect.ErrConfig) {
 		t.Fatalf("zero weight gave %v", err)
 	}
 	delete(env, "PM_HL_GAP_WEIGHT")
 	env["PM_PMUS_RPS"] = "0"
-	if _, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry()); !errors.Is(err, collect.ErrConfig) {
+	if _, err := collect.Build(cfg, func(k string) string { return env[k] }, st, &pruner{}, prometheus.NewRegistry()); !errors.Is(err, collect.ErrConfig) {
 		t.Fatalf("zero rate gave %v", err)
 	}
 }
@@ -204,5 +232,43 @@ func TestBuildMakesTheJobsOfKalshi(t *testing.T) {
 	env["PM_KALSHI_MIN_USD"] = "-1"
 	if _, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry()); !errors.Is(err, collect.ErrConfig) {
 		t.Fatalf("negative floor gave %v", err)
+	}
+}
+
+// holdsLevr adds the Levr store methods to the in-memory sink
+type holdsLevr struct {
+	*venuetest.Mem
+}
+
+func (holdsLevr) UpsertPositions(context.Context, []levr.Position) (int, error) { return 0, nil }
+
+func (holdsLevr) Positions(context.Context, []string) (map[string]levr.Position, error) {
+	return nil, nil
+}
+
+func (holdsLevr) ClosePositions(context.Context, []levr.Close) (int, error) { return 0, nil }
+
+func (holdsLevr) LoseOpen(context.Context, string, int, time.Time) (int, error) { return 0, nil }
+
+func (holdsLevr) EachPosition(context.Context, func(levr.Position) error) error { return nil }
+
+func (holdsLevr) UpsertWallets(context.Context, []levr.Wallet) error { return nil }
+
+func TestBuildMakesTheJobsOfLevr(t *testing.T) {
+	cfg := collect.Config{Venues: []string{"levr"}, KeepDays: 2}
+	env := map[string]string{"PM_LEVR_EVERY": "30s"}
+	jobs, err := collect.Build(cfg, func(k string) string { return env[k] }, holdsLevr{venuetest.New()}, &pruner{}, prometheus.NewRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, j := range jobs {
+		names = append(names, j.Source.Name())
+	}
+	if want := []string{"levr/positions", "levr/wallets", "housekeeping"}; !slices.Equal(names, want) || jobs[0].Every != 30*time.Second {
+		t.Fatalf("jobs %v", names)
+	}
+	if _, err := collect.Build(cfg, func(string) string { return "" }, venuetest.New(), &pruner{}, prometheus.NewRegistry()); !errors.Is(err, collect.ErrConfig) {
+		t.Fatalf("a store without positions gave %v", err)
 	}
 }
