@@ -44,7 +44,7 @@ func (c *Client) Get(ctx context.Context, base string, q url.Values, out any) er
 		if err := c.Limiter.Wait(ctx); err != nil {
 			return err
 		}
-		wait, err := c.once(ctx, target, out)
+		wait, err := c.once(ctx, target, attempt, out)
 		if wait == 0 || attempt >= c.Retries {
 			return err
 		}
@@ -59,7 +59,7 @@ func (c *Client) Get(ctx context.Context, base string, q url.Values, out any) er
 }
 
 // once returns a nonzero wait when the answer was a 429
-func (c *Client) once(ctx context.Context, target string, out any) (time.Duration, error) {
+func (c *Client) once(ctx context.Context, target string, attempt int, out any) (time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return 0, err
@@ -73,7 +73,7 @@ func (c *Client) once(ctx context.Context, target string, out any) (time.Duratio
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, errLimit))
-		return RetryAfter(resp.Header.Get("Retry-After")), fmt.Errorf("%w: %d", ErrStatus, resp.StatusCode)
+		return RetryAfter(resp.Header.Get("Retry-After"), attempt), fmt.Errorf("%w: %d", ErrStatus, resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, errLimit))
@@ -82,12 +82,12 @@ func (c *Client) once(ctx context.Context, target string, out any) (time.Duratio
 	return 0, json.UnmarshalRead(io.LimitReader(resp.Body, bodyLimit), out)
 }
 
-// RetryAfter reads whole seconds from the header and falls back to a jittered second, as some venues send none
-func RetryAfter(h string) time.Duration {
+// RetryAfter reads whole seconds from the header and falls back to the backoff of the attempt, as some venues send none
+func RetryAfter(h string, attempt int) time.Duration {
 	if s, err := strconv.Atoi(h); err == nil && s > 0 {
 		return min(time.Duration(s)*time.Second, backoffMax)
 	}
-	return Backoff(0)
+	return Backoff(attempt)
 }
 
 // Backoff doubles from one second up to thirty with up to half of it added as jitter

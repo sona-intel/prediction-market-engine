@@ -123,3 +123,16 @@ func TestFinite(t *testing.T) {
 		t.Fatal("finite")
 	}
 }
+
+func TestRetriesBackOffFurtherWithoutRetryAfter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+	var out any
+	var slept []time.Duration
+	_ = client(3, &slept).Get(t.Context(), srv.URL, nil, &out)
+	if len(slept) != 3 || slept[0] > 1500*time.Millisecond || slept[2] < 4*time.Second {
+		t.Fatalf("slept %v", slept)
+	}
+}
