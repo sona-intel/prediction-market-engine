@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -74,4 +75,17 @@ func Int(get func(string) string, key string, def int) (int, error) {
 		return 0, fmt.Errorf("%w: %s must be a positive number", ErrConfig, key)
 	}
 	return n, nil
+}
+
+// Float reads a positive number setting and falls back to def when it is unset
+func Float(get func(string) string, key string, def float64) (float64, error) {
+	s := get(key)
+	if s == "" {
+		return def, nil
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || !(f > 0) || math.IsInf(f, 0) {
+		return 0, fmt.Errorf("%w: %s must be a positive number", ErrConfig, key)
+	}
+	return f, nil
 }

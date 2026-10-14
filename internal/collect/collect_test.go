@@ -161,9 +161,9 @@ func TestBuildAddsHousekeepingAndSkipsVenuesWithoutSources(t *testing.T) {
 	}
 }
 
-func TestBuildMakesTheJobsOfHyperliquid(t *testing.T) {
-	env := map[string]string{"PM_HL_META_EVERY": "3m"}
-	cfg := collect.Config{Venues: []string{"hyperliquid"}, KeepDays: 2}
+func TestBuildMakesTheJobsOfHyperliquidAndPolymarketUS(t *testing.T) {
+	env := map[string]string{"PM_PMUS_TOP": "7", "PM_PMUS_EVERY": "3m"}
+	cfg := collect.Config{Venues: []string{"hyperliquid", "polymarket-us"}, KeepDays: 2}
 	jobs, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry())
 	if err != nil {
 		t.Fatal(err)
@@ -172,12 +172,17 @@ func TestBuildMakesTheJobsOfHyperliquid(t *testing.T) {
 	for _, j := range jobs {
 		names = append(names, j.Source.Name())
 	}
-	want := []string{"hyperliquid/stream", "housekeeping"}
-	if !slices.Equal(names, want) || jobs[0].Every != 30*time.Second {
+	want := []string{"hyperliquid/stream", "polymarket-us/quotes", "polymarket-us/catalogue", "polymarket-us/settlement", "housekeeping"}
+	if !slices.Equal(names, want) || jobs[1].Every != 3*time.Minute {
 		t.Fatalf("jobs %v", names)
 	}
 	env["PM_HL_GAP_WEIGHT"] = "0"
 	if _, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry()); !errors.Is(err, collect.ErrConfig) {
 		t.Fatalf("zero weight gave %v", err)
+	}
+	delete(env, "PM_HL_GAP_WEIGHT")
+	env["PM_PMUS_RPS"] = "0"
+	if _, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry()); !errors.Is(err, collect.ErrConfig) {
+		t.Fatalf("zero rate gave %v", err)
 	}
 }
