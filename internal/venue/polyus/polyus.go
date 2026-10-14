@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -102,7 +103,7 @@ func (c *Client) bbo(ctx context.Context, slug string) (BBO, error) {
 func (c *Client) settled(ctx context.Context, slug string) (float64, bool, error) {
 	var s settlement
 	err := c.HTTP.Get(ctx, c.BaseURL+"/markets/"+url.PathEscape(slug)+"/settlement", nil, &s)
-	if errors.Is(err, httpx.ErrStatus) {
+	if se, ok := errors.AsType[httpx.StatusError](err); ok && se.Code == http.StatusNotFound {
 		return 0, false, nil
 	}
 	if err != nil || s.Settlement == nil {

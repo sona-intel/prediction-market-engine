@@ -37,14 +37,15 @@ func raw(t testing.TB, name string) []byte {
 
 // gateway answers from the recorded files and logs the requests it saw
 type gateway struct {
-	t       testing.TB
-	mu      sync.Mutex
-	queries []map[string][]string
-	bbo     map[string]string
-	settle  map[string]string
-	pages   int
-	rateLim bool
-	markets []byte
+	t          testing.TB
+	mu         sync.Mutex
+	queries    []map[string][]string
+	bbo        map[string]string
+	settle     map[string]string
+	pages      int
+	rateLim    bool
+	failSettle bool
+	markets    []byte
 }
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +72,10 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		slug := path[len("/markets/") : len(path)-len("/settlement")]
 		f, ok := g.settle[slug]
+		if g.failSettle {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"code":5,"message":"Settlement not found","details":[]}`))
@@ -201,6 +206,22 @@ func TestSettlementUsesTheFlagAndKeepsTheResult(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(m.Settled()); got != 1 {
 		t.Fatalf("settled counter %v", got)
+	}
+}
+
+func TestSettlementCountsAnswersThatAreNotNotFound(t *testing.T) {
+	g, cli := newGateway(t)
+	g.failSettle = true
+	st := venuetest.New()
+	if err := st.UpsertMarkets(t.Context(), []venue.Market{{Venue: venue.PolymarketUS, ID: doneSlug, Close: time.Now().Add(-time.Hour), Status: "open"}}); err != nil {
+		t.Fatal(err)
+	}
+	m := polyus.NewMetrics(prometheus.NewRegistry())
+	if err := (&polyus.Settlements{Client: cli, Store: st, Batch: 10, Metrics: m}).Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.ToFloat64(m.Failures("settlement")); got != 1 {
+		t.Fatalf("failures %v", got)
 	}
 }
 

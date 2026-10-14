@@ -26,6 +26,13 @@ const (
 
 var ErrStatus = errors.New("unexpected status")
 
+// StatusError carries the code of an answer that was not 200 and matches ErrStatus
+type StatusError struct{ Code int }
+
+func (e StatusError) Error() string { return fmt.Sprintf("%s: %d", ErrStatus, e.Code) }
+
+func (e StatusError) Is(target error) bool { return target == ErrStatus }
+
 // Client sends requests through the limiter and retries 429 answers up to Retries times, so a zero Retries never retries
 type Client struct {
 	HTTP      *http.Client
@@ -94,11 +101,11 @@ func (c *Client) once(ctx context.Context, method, target string, body []byte, a
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, errLimit))
-		return RetryAfter(resp.Header.Get("Retry-After"), attempt), fmt.Errorf("%w: %d", ErrStatus, resp.StatusCode)
+		return RetryAfter(resp.Header.Get("Retry-After"), attempt), StatusError{Code: resp.StatusCode}
 	}
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, errLimit))
-		return 0, fmt.Errorf("%w: %d", ErrStatus, resp.StatusCode)
+		return 0, StatusError{Code: resp.StatusCode}
 	}
 	return 0, json.UnmarshalRead(io.LimitReader(resp.Body, bodyLimit), out)
 }
