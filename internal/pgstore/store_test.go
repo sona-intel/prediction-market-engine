@@ -22,15 +22,19 @@ func TestMigrateTwiceKeepsRows(t *testing.T) {
 	if v, err := st.Cursor(t.Context(), "k/trades"); err != nil || v != "c1" {
 		t.Fatalf("cursor %q, %v", v, err)
 	}
+	_, files, err := pgstore.ReadMigration()
+	if err != nil {
+		t.Fatal(err)
+	}
 	var n int
-	if err := st.Pool.QueryRow(t.Context(), `select count(*) from schema_migrations`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("migrations recorded %d, %v", n, err)
+	if err := st.Pool.QueryRow(t.Context(), `select count(*) from schema_migrations`).Scan(&n); err != nil || n != files {
+		t.Fatalf("migrations recorded %d of %d, %v", n, files, err)
 	}
 }
 
 func TestMigrationFileRunsTwice(t *testing.T) {
 	st := pgtest.New(t)
-	body, err := pgstore.ReadMigration()
+	body, _, err := pgstore.ReadMigration()
 	if err != nil {
 		t.Fatal(err)
 	}
