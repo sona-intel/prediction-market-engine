@@ -1,6 +1,6 @@
 //go:build ignore
 
-// Records the venue fixtures from the live APIs, run from the engine root as go run testdata/venues/record.go [hip4] [polyus] [kalshi]
+// Records the venue fixtures from the live APIs, run from the engine root as go run testdata/venues/record.go [hip4] [polyus] [kalshi] [levr]
 package main
 
 import (
@@ -19,12 +19,15 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"pm/internal/venue/levr"
 )
 
 const (
 	hlBase     = "https://api.hyperliquid.xyz"
 	pmusBase   = "https://gateway.polymarket.us/v1"
 	kalshiBase = "https://api.elections.kalshi.com/trade-api/v2"
+	levrURL    = "https://levrbet.squids.live/v1-levr-prod-portal@v1/api/graphql"
 	outDir     = "testdata/venues"
 	// tradeRows is how many whole trades a trades fixture keeps
 	tradeRows = 6
@@ -41,7 +44,7 @@ func main() {
 	defer cancel()
 	which := os.Args[1:]
 	if len(which) == 0 {
-		which = []string{"hip4", "polyus", "kalshi"}
+		which = []string{"hip4", "polyus", "kalshi", "levr"}
 	}
 	for _, w := range which {
 		var err error
@@ -52,6 +55,8 @@ func main() {
 			err = recordPolyUS(ctx)
 		case "kalshi":
 			err = recordKalshi(ctx)
+		case "levr":
+			err = recordLevr(ctx)
 		default:
 			err = fmt.Errorf("unknown target %q", w)
 		}
@@ -155,6 +160,10 @@ func recordHIP4(ctx context.Context) error {
 		return err
 	}
 	save("hl_recenttrades_side1.json", firstN(mirror, tradeRows))
+
+	if err := recordFills(ctx, busy.trades); err != nil {
+		return err
+	}
 
 	c, _, err := websocket.Dial(ctx, "wss://api.hyperliquid.xyz/ws", nil)
 	if err != nil {
@@ -389,4 +398,127 @@ func recordKalshi(ctx context.Context) error {
 	}
 	save("kalshi_settled.json", map[string]any{"markets": []json.RawMessage{yes, no}})
 	return nil
+}
+
+func gql(ctx context.Context, query string, out any) error {
+	_, err := do(ctx, http.MethodPost, levrURL, map[string]string{"query": query}, out)
+	return err
+}
+
+func quoted(ids ...string) string {
+	b, _ := json.Marshal(ids)
+	return string(b)
+}
+
+// recordLevr keeps the rows of three positions, a win, a cancelled game and a liquidation, as the GraphQL answered them
+func recordLevr(ctx context.Context) error {
+	const ft = "levrFullTimeMarketSchema"
+	var win, void *levr.Redeemed
+	var after string
+	for range 8 {
+		var r struct {
+			Data map[string][]levr.Redeemed `json:"data"`
+		}
+		where := ""
+		if after != "" {
+			where = fmt.Sprintf(", where: {id_lt: %q}", after)
+		}
+		if err := gql(ctx, fmt.Sprintf("{ %sPositionRedeemeds(limit: 1000, orderBy: id_DESC%s) { %s } }", ft, where, levr.RedeemedFields), &r); err != nil {
+			return err
+		}
+		rows := r.Data[ft+"PositionRedeemeds"]
+		for i := range rows {
+			switch {
+			case win == nil && rows[i].MarketWinner > 0 && rows[i].Profit != "0":
+				win = &rows[i]
+			case void == nil && rows[i].MarketWinner == 0:
+				void = &rows[i]
+			}
+		}
+		if (win != nil && void != nil) || len(rows) == 0 {
+			break
+		}
+		after = rows[len(rows)-1].ID
+	}
+	if win == nil || void == nil {
+		return fmt.Errorf("no redeemed win and cancelled game in the newest 8000 rows")
+	}
+	var liq struct {
+		Data map[string][]levr.Liquidated `json:"data"`
+	}
+	if err := gql(ctx, fmt.Sprintf("{ levrLiquidationEngineSchemaPositionLiquidateds(limit: 1, orderBy: id_DESC) { %s } }", levr.LiquidatedFields), &liq); err != nil {
+		return err
+	}
+	liqRows := liq.Data["levrLiquidationEngineSchemaPositionLiquidateds"]
+	if len(liqRows) == 0 {
+		return fmt.Errorf("no liquidation")
+	}
+	ids := []string{win.PositionID, void.PositionID, liqRows[0].PositionID}
+	queries := []struct{ file, query string }{
+		{"levr_opened.json", fmt.Sprintf("{ %sPositionOpeneds(orderBy: id_ASC, where: {positionId_in: %s}) { %s } }", ft, quoted(ids...), levr.OpenedFields)},
+		{"levr_redeemed.json", fmt.Sprintf("{ %sPositionRedeemeds(orderBy: id_ASC, where: {positionId_in: %s}) { %s } }", ft, quoted(ids[:2]...), levr.RedeemedFields)},
+		{"levr_liquidated.json", fmt.Sprintf("{ levrLiquidationEngineSchemaPositionLiquidateds(orderBy: id_ASC, where: {positionId_in: %s}) { %s } }", quoted(ids[2]), levr.LiquidatedFields)},
+		{"levr_settled.json", fmt.Sprintf("{ %sMarketSettleds(orderBy: id_ASC, where: {gameMarketId_in: %s}) { %s } }", ft, quoted(win.GameMarketID, void.GameMarketID), levr.SettledFields)},
+	}
+	for _, q := range queries {
+		var raw json.RawMessage
+		if err := gql(ctx, q.query, &raw); err != nil {
+			return err
+		}
+		save(q.file, raw)
+	}
+	return nil
+}
+
+// recordFills keeps whole fills of a wallet that held outcomes at settlement, two settlements on a Yes coin and a No coin plus an ordinary buy and sell
+func recordFills(ctx context.Context, trades []json.RawMessage) error {
+	seen := map[string]bool{}
+	for _, raw := range trades {
+		var t struct {
+			Users []string `json:"users"`
+		}
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return err
+		}
+		for _, u := range t.Users {
+			if seen[u] {
+				continue
+			}
+			seen[u] = true
+			var fills []json.RawMessage
+			if err := post(ctx, map[string]any{"type": "userFills", "user": u}, &fills); err != nil {
+				return err
+			}
+			time.Sleep(time.Second)
+			var settled, other []json.RawMessage
+			var yes, no bool
+			for _, f := range fills {
+				var x struct {
+					Coin string `json:"coin"`
+					Dir  string `json:"dir"`
+				}
+				if err := json.Unmarshal(f, &x); err != nil {
+					return err
+				}
+				switch {
+				case x.Dir == "Settlement" && strings.HasSuffix(x.Coin, "0") && !yes:
+					yes, settled = true, append(settled, f)
+				case x.Dir == "Settlement" && strings.HasSuffix(x.Coin, "1") && !no:
+					no, settled = true, append(settled, f)
+				case x.Dir == "Buy" && len(other) == 0, x.Dir == "Sell" && len(other) == 1:
+					other = append(other, f)
+				}
+			}
+			if yes && no && len(other) == 2 {
+				save("hl_userfills.json", append(settled, other...))
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("no wallet among %d had settlements on both coins", len(seen))
+}
+
+func post(ctx context.Context, body map[string]any, out any) error {
+	_, err := do(ctx, http.MethodPost, hlBase+"/info", body, out)
+	return err
 }

@@ -1,0 +1,48 @@
+{
+  "data": {
+    "levrFullTimeMarketSchemaPositionOpeneds": [
+      {
+        "id": "0107587960-8de12-000078",
+        "timestamp": "2026-09-24T10:50:50.000000Z",
+        "gameMarketId": "0x37f8a64f31e550cfa82b8c9f3d2bdf980d4b0229650ebed098526d2ea7454007",
+        "gameId": "4284",
+        "positionId": "0x352331706070f53fd43d54222b0dfdd2527774ed09fe1985b22dc6989c0875c5",
+        "receiver": "0x6a269322f9a432bc20ff13217e4a9d960fc1118b",
+        "assetAmount": "5000000",
+        "positionSize": "15000000",
+        "positionFee": "150000",
+        "entryPrice": "296735",
+        "liqPrice": "243821",
+        "side": 1
+      },
+      {
+        "id": "0112856024-2c2f7-000116",
+        "timestamp": "2026-10-12T20:57:46.000000Z",
+        "gameMarketId": "0xfa2ed30218db48a9c3b76e017b98e032d1da0976f6f4e3d5702a1db18377671b",
+        "gameId": "4885",
+        "positionId": "0x46d28c3c7b524cc42590e8a73718d5cc452e0194afcf60ed7f10de48c10cd0cf",
+        "receiver": "0x7d4609c51eca8f1371721e6511b09e9ece9739ed",
+        "assetAmount": "6000001",
+        "positionSize": "12000000",
+        "positionFee": "120000",
+        "entryPrice": "523809",
+        "liqPrice": "373931",
+        "side": 1
+      },
+      {
+        "id": "0113172183-33d34-000124",
+        "timestamp": "2026-10-13T23:29:26.000000Z",
+        "gameMarketId": "0x7b3f77bc78679d57fad6367f3b134d130804d68ae622a6f8e2d0616320b53d49",
+        "gameId": "4938",
+        "positionId": "0xb6485f20c4709667d4e5cbfa80f34dc2eb7ddc0b62f6873627119c33f4739e3c",
+        "receiver": "0x9b8759115e594c766845663aeeb807bb04c3557d",
+        "assetAmount": "5000000",
+        "positionSize": "25000000",
+        "positionFee": "250000",
+        "entryPrice": "115874",
+        "liqPrice": "104365",
+        "side": 1
+      }
+    ]
+  }
+}

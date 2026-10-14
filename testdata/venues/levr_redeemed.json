@@ -1,0 +1,30 @@
+{
+  "data": {
+    "levrFullTimeMarketSchemaPositionRedeemeds": [
+      {
+        "id": "0109636717-54169-000076",
+        "timestamp": "2026-10-01T14:52:44.000000Z",
+        "positionId": "0x352331706070f53fd43d54222b0dfdd2527774ed09fe1985b22dc6989c0875c5",
+        "gameMarketId": "0x37f8a64f31e550cfa82b8c9f3d2bdf980d4b0229650ebed098526d2ea7454007",
+        "side": 1,
+        "marketWinner": 0,
+        "profit": "0",
+        "loss": "0",
+        "borrowFee": "0",
+        "balanceFee": "735000"
+      },
+      {
+        "id": "0113428263-9b5ca-000100",
+        "timestamp": "2026-10-14T20:57:53.000000Z",
+        "positionId": "0x46d28c3c7b524cc42590e8a73718d5cc452e0194afcf60ed7f10de48c10cd0cf",
+        "gameMarketId": "0xfa2ed30218db48a9c3b76e017b98e032d1da0976f6f4e3d5702a1db18377671b",
+        "side": 1,
+        "marketWinner": 1,
+        "profit": "10909113",
+        "loss": "0",
+        "borrowFee": "872729",
+        "balanceFee": "597600"
+      }
+    ]
+  }
+}

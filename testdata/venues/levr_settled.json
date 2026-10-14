@@ -1,0 +1,22 @@
+{
+  "data": {
+    "levrFullTimeMarketSchemaMarketSettleds": [
+      {
+        "id": "0108519282-acc32-000095",
+        "timestamp": "2026-09-27T17:00:22.000000Z",
+        "gameMarketId": "0x37f8a64f31e550cfa82b8c9f3d2bdf980d4b0229650ebed098526d2ea7454007",
+        "gameId": "4284",
+        "winner": 0,
+        "settledAs": 3
+      },
+      {
+        "id": "0113155236-dbf37-000060",
+        "timestamp": "2026-10-13T22:04:05.000000Z",
+        "gameMarketId": "0xfa2ed30218db48a9c3b76e017b98e032d1da0976f6f4e3d5702a1db18377671b",
+        "gameId": "4885",
+        "winner": 1,
+        "settledAs": 2
+      }
+    ]
+  }
+}

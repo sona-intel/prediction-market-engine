@@ -1,0 +1,13 @@
+{
+  "data": {
+    "levrLiquidationEngineSchemaPositionLiquidateds": [
+      {
+        "id": "0113410554-10b99-000011",
+        "timestamp": "2026-10-14T19:28:47.000000Z",
+        "positionId": "0xb6485f20c4709667d4e5cbfa80f34dc2eb7ddc0b62f6873627119c33f4739e3c",
+        "user": "0x9b8759115e594c766845663aeeb807bb04c3557d",
+        "forfeitedCollateral": "3153400"
+      }
+    ]
+  }
+}
