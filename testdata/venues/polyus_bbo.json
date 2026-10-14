@@ -1,0 +1,51 @@
+{
+  "marketData": {
+    "marketSlug": "paccc-usho-midterms-2026-11-03-dem",
+    "currentPx": {
+      "value": "0.8975",
+      "currency": "USD"
+    },
+    "lastTradePx": {
+      "value": "0.8970",
+      "currency": "USD"
+    },
+    "settlementPx": {
+      "value": "0.8400",
+      "currency": "USD"
+    },
+    "sharesTraded": "44443051.0000",
+    "openInterest": "1398766.0000",
+    "bestAsk": {
+      "value": "0.8980",
+      "currency": "USD"
+    },
+    "bestBid": {
+      "value": "0.8970",
+      "currency": "USD"
+    },
+    "askDepth": 16,
+    "bidDepth": 22,
+    "lastPriceSample": {
+      "longPx": {
+        "value": "0.8970",
+        "currency": "USD"
+      },
+      "shortPx": {
+        "value": "0.103",
+        "currency": "USD"
+      },
+      "ts": "2026-10-14T20:40:50.782170160Z"
+    },
+    "longQuote": {
+      "value": "0.8980",
+      "currency": "USD"
+    },
+    "shortQuote": {
+      "value": "0.103",
+      "currency": "USD"
+    },
+    "state": "MARKET_STATE_OPEN",
+    "bidShares": "1700000",
+    "askShares": "610000"
+  }
+}

@@ -1,0 +1,140 @@
+{
+  "markets": [
+    {
+      "id": "230786",
+      "question": "Which team will advance from Spain vs Argentina on 2026-07-19 3:00PM ET?",
+      "slug": "aadc-fwc-esp-arg-2026-07-19-to-advance",
+      "endDate": "2026-07-19T22:02:28Z",
+      "category": "sports",
+      "startDate": "2026-07-15T22:46:15Z",
+      "description": "This market resolves to the team that advances to the next round from the Spain vs Argentina match scheduled for 2026-07-19 3:00PM ET. Advancement is determined by the official winner of the match, including extra time and penalty shootouts if applicable. Outcome sourced from the governing league.",
+      "active": true,
+      "marketType": "moneyline",
+      "closed": true,
+      "createdAt": "2026-07-15T22:46:15Z",
+      "updatedAt": "2026-10-06T22:11:05Z",
+      "archived": false,
+      "orderPriceMinTickSize": 0.005,
+      "gameStartTime": "2026-07-19T19:00:00Z",
+      "manualActivation": false,
+      "sportsMarketType": "soccer_game_to_advance",
+      "marketSides": [
+        {
+          "id": "461150",
+          "marketSideType": "MARKET_SIDE_TYPE_INSTRUMENT",
+          "identifier": "aadc-fwc-esp-arg-2026-07-19-to-advance",
+          "createdAt": "2026-07-15T22:46:15Z",
+          "updatedAt": "2026-07-15T22:46:15Z",
+          "description": "Spain",
+          "price": "1",
+          "marketId": 230786,
+          "long": true,
+          "teamId": 8451,
+          "team": {
+            "id": 8451,
+            "name": "Spain",
+            "abbreviation": "esp",
+            "league": "fwc",
+            "record": "",
+            "logo": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-countries/ESP.png",
+            "alias": "",
+            "safeName": "Spain",
+            "colorPrimary": "#AA151B",
+            "providerId": 958,
+            "ordering": "home",
+            "longIcon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-countries/ESP.png",
+            "shortIcon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-countries/ESP.png",
+            "displayAbbreviation": "ESP",
+            "providerIds": [
+              {
+                "provider": "PROVIDER_SPORTRADAR",
+                "providerId": "sr:competitor:4698"
+              },
+              {
+                "provider": "PROVIDER_OPTICODDS",
+                "providerId": "9ECA5CC9A2A6A4AA"
+              },
+              {
+                "provider": "PROVIDER_SPORTSDATAIO",
+                "providerId": "958"
+              }
+            ],
+            "longIconDark": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-countries/ESP.png",
+            "shortIconDark": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-countries/ESP.png",
+            "color": {
+              "light": "#AA151B",
+              "dark": "#AA151B"
+            },
+            "imageDisplayType": "IMAGE_DISPLAY_TYPE_FLAG"
+          },
+          "tradable": true
+        },
+        {
+          "id": "461151",
+          "marketSideType": "MARKET_SIDE_TYPE_INSTRUMENT",
+          "identifier": "aadc-fwc-esp-arg-2026-07-19-to-advance",
+          "createdAt": "2026-07-15T22:46:15Z",
+          "updatedAt": "2026-07-15T22:46:15Z",
+          "description": "Argentina",
+          "price": "0",
+          "marketId": 230786,
+          "long": false,
+          "teamId": 8403,
+          "team": {
+            "id": 8403,
+            "name": "Argentina",
+            "abbreviation": "arg",
+            "league": "fwc",
+            "record": "",
+            "logo": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-countries/ARG.png",
+            "alias": "",
+            "safeName": "Argentina",
+            "colorPrimary": "#74ACDF",
+            "providerId": 859,
+            "ordering": "away",
+            "longIcon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-countries/ARG.png",
+            "shortIcon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-countries/ARG.png",
+            "displayAbbreviation": "ARG",
+            "providerIds": [
+              {
+                "provider": "PROVIDER_OPTICODDS",
+                "providerId": "4FF95769472C6172"
+              },
+              {
+                "provider": "PROVIDER_SPORTSDATAIO",
+                "providerId": "859"
+              },
+              {
+                "provider": "PROVIDER_SPORTRADAR",
+                "providerId": "sr:competitor:4819"
+              }
+            ],
+            "longIconDark": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-countries/ARG.png",
+            "shortIconDark": "https://polymarket-upload.s3.us-east-2.amazonaws.com/us-countries/ARG.png",
+            "color": {
+              "light": "#74ACDF",
+              "dark": "#74ACDF"
+            },
+            "imageDisplayType": "IMAGE_DISPLAY_TYPE_FLAG"
+          },
+          "tradable": true
+        }
+      ],
+      "outcomes": "[\"Spain\",\"Argentina\"]",
+      "outcomePrices": "[\"1\",\"0\"]",
+      "ep3Status": "EXPIRED",
+      "status": "MARKET_STATUS_RESOLVED",
+      "assetPriceTerms": null,
+      "sportsMarketTypeV2": "SPORTS_MARKET_TYPE_MONEYLINE",
+      "hidden": false,
+      "tags": [],
+      "feeCoefficient": 0.0695,
+      "ep3SyncedAt": "2026-10-06T22:11:05Z",
+      "minimumTradeQty": 0.01,
+      "rulesDisclaimer": "Settles to the winner of the 2026 World Cup Final, including extra time and penalty shootouts.",
+      "rulesDisclaimerPopup": true,
+      "comboEnabled": true,
+      "politics": null
+    }
+  ]
+}

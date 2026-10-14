@@ -1,0 +1,54 @@
+{
+  "outcomes": [
+    {
+      "outcome": 11121,
+      "name": "template:sportsContestParticipant2",
+      "description": "participant:FC Shakhtar Donetsk",
+      "sideSpecs": [
+        {
+          "name": "Yes"
+        },
+        {
+          "name": "No"
+        }
+      ],
+      "quoteToken": "USDC",
+      "venue": "out",
+      "deployerFeeScale": "1.0"
+    },
+    {
+      "outcome": 1488,
+      "name": "template:sportsTournamentParticipant",
+      "description": "participant:Buffalo Bills",
+      "sideSpecs": [
+        {
+          "name": "Yes"
+        },
+        {
+          "name": "No"
+        }
+      ],
+      "quoteToken": "USDC",
+      "venue": "out",
+      "deployerFeeScale": "1.0"
+    },
+    {
+      "outcome": 10399,
+      "name": "template:binaryPrice",
+      "description": "perp:xyz:TSM|priceDescription:1-minute candle|seconds:300|threshold:500|time:20261016-1335",
+      "sideSpecs": [
+        {
+          "name": "template:Yes"
+        },
+        {
+          "name": "template:No"
+        }
+      ],
+      "quoteToken": "USDC",
+      "venue": "txyz"
+    }
+  ],
+  "questions": [],
+  "deployers": [],
+  "feeScale": "1.0"
+}

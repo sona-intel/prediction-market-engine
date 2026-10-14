@@ -1,0 +1,21 @@
+{
+  "marketData": {
+    "marketSlug": "aadc-fwc-esp-arg-2026-07-19-to-advance",
+    "currentPx": null,
+    "lastTradePx": null,
+    "settlementPx": {
+      "value": "1.0000",
+      "currency": "USD"
+    },
+    "sharesTraded": "",
+    "openInterest": "",
+    "bestAsk": null,
+    "bestBid": null,
+    "askDepth": 0,
+    "bidDepth": 0,
+    "lastPriceSample": null,
+    "state": "MARKET_STATE_EXPIRED",
+    "bidShares": "0",
+    "askShares": "0"
+  }
+}

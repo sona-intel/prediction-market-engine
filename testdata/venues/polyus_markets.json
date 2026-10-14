@@ -1,0 +1,160 @@
+{
+  "markets": [
+    {
+      "id": "11325",
+      "question": "U.S House Midterm Winner",
+      "slug": "paccc-usho-midterms-2026-11-03-dem",
+      "endDate": "2027-02-02T04:59:00Z",
+      "category": "politics",
+      "startDate": "2026-04-07T14:12:13Z",
+      "image": "https://polymarket-upload.s3.us-east-2.amazonaws.com/event-images/democratic.png",
+      "description": "This market will settle to Yes if the Democratic Party wins control of the United States House of Representatives in the 2026 United States midterm election. Outcome sourced from relevant state electoral authorities, and the United States House of Representatives.\n\nA party wins control of the United States House of Representatives if it wins a majority of the chamber’s voting seats. If no party wins a majority of voting seats, the chamber will be deemed controlled by the party with which the first elected Speaker of the House of the Congress that convenes after the 2026 midterm election is affiliated.\n\nThe following rules govern the counting of seats for determining which party wins control of the chamber.\n\nAll House elections in the 2026 United States midterm election that elect voting members and determine representation in the upcoming 120th Congress are included. Where a seat is decided by a runoff, the runoff result will determine attribution of that seat.\n\nSeats are attributed to the party under which the member was elected. If a member-elect changes party affiliation, or vacates their seat, between election day and the formal organization of Congress, the seat is attributed to the party under which the member was elected.\n\nHouse members elected as independents who formally caucus with, or, for newly elected members, who announce their intent to caucus with, a party are included in that party’s count. If the caucus decisions of members of the House elected as independents cannot be determined on the date of the election, this market may remain open until the earlier of (i) an announcement from the relevant members of their intents to caucus, or (ii) January 4th, 11:59 PM ET of the following calendar year. If no such announcement is made by January 4th, 11:59 PM ET of the following calendar year, the member will not count towards the seat count of any party.\n",
+      "active": true,
+      "marketType": "election",
+      "closed": false,
+      "createdAt": "2026-04-07T14:12:51Z",
+      "updatedAt": "2026-10-14T20:39:01Z",
+      "archived": false,
+      "orderPriceMinTickSize": 0.001,
+      "gameStartTime": "2026-11-03T00:00:00Z",
+      "manualActivation": false,
+      "sportsMarketType": "election",
+      "marketSides": [
+        {
+          "id": "22649",
+          "marketSideType": "MARKET_SIDE_TYPE_INSTRUMENT",
+          "identifier": "paccc-usho-midterms-2026-11-03-dem",
+          "createdAt": "2026-04-07T14:12:51Z",
+          "updatedAt": "2026-04-07T14:12:51Z",
+          "description": "Yes",
+          "price": "0.8980",
+          "marketId": 11325,
+          "long": true,
+          "quote": {
+            "value": "0.8980",
+            "currency": "USD"
+          },
+          "tradable": true
+        },
+        {
+          "id": "22650",
+          "marketSideType": "MARKET_SIDE_TYPE_INSTRUMENT",
+          "identifier": "paccc-usho-midterms-2026-11-03-dem",
+          "createdAt": "2026-04-07T14:12:51Z",
+          "updatedAt": "2026-04-07T14:12:51Z",
+          "description": "No",
+          "price": "0.103",
+          "marketId": 11325,
+          "long": false,
+          "quote": {
+            "value": "0.103",
+            "currency": "USD"
+          },
+          "tradable": true
+        }
+      ],
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.8980\",\"0.103\"]",
+      "ep3Status": "OPEN",
+      "status": "MARKET_STATUS_OPEN",
+      "assetPriceTerms": null,
+      "sportsMarketTypeV2": "SPORTS_MARKET_TYPE_UNSPECIFIED",
+      "hidden": false,
+      "tags": [],
+      "title": "Democratic Party",
+      "color": "#2258F8",
+      "darkColor": "#0073FF",
+      "feeCoefficient": 0.0695,
+      "bestBidQuote": {
+        "value": "0.8970",
+        "currency": "USD"
+      },
+      "bestAskQuote": {
+        "value": "0.8980",
+        "currency": "USD"
+      },
+      "titleShort": "Democratic Party",
+      "ep3SyncedAt": "2026-10-14T00:13:18Z",
+      "minimumTradeQty": 1,
+      "comboEnabled": false,
+      "politics": null
+    },
+    {
+      "id": "1249058",
+      "question": "League to Win World Series",
+      "slug": "tec-mlb-wsleague-2026-11-01-w-al",
+      "endDate": "2026-11-16T04:00:00Z",
+      "category": "sports",
+      "startDate": "2026-10-06T15:49:51Z",
+      "image": "https://polymarket-upload.s3.us-east-2.amazonaws.com/event-images/mlb-american-league.png",
+      "description": "This market will settle to Yes if a team from the American League wins the 2026 World Series. As of market creation, the remaining teams from the American League in the 2026 MLB Postseason are the Chicago White Sox, Cleveland Guardians, New York Yankees, and Tampa Bay Rays. If one of those four teams mentioned win the 2026 World Series, this market will settle to Yes. Outcome sourced from MLB.",
+      "active": true,
+      "marketType": "futures",
+      "closed": false,
+      "createdAt": "2026-10-06T15:49:51Z",
+      "updatedAt": "2026-10-14T19:53:38Z",
+      "archived": false,
+      "orderPriceMinTickSize": 0.01,
+      "gameStartTime": "2026-10-24T00:00:00Z",
+      "manualActivation": false,
+      "sportsMarketType": "futures",
+      "marketSides": [
+        {
+          "id": "2497598",
+          "marketSideType": "MARKET_SIDE_TYPE_INSTRUMENT",
+          "identifier": "tec-mlb-wsleague-2026-11-01-w-al",
+          "createdAt": "2026-10-06T15:49:51Z",
+          "updatedAt": "2026-10-06T15:49:51Z",
+          "description": "Yes",
+          "price": "0.3300",
+          "marketId": 1249058,
+          "long": true,
+          "quote": {
+            "value": "0.3300",
+            "currency": "USD"
+          },
+          "tradable": true
+        },
+        {
+          "id": "2497599",
+          "marketSideType": "MARKET_SIDE_TYPE_INSTRUMENT",
+          "identifier": "tec-mlb-wsleague-2026-11-01-w-al",
+          "createdAt": "2026-10-06T15:49:51Z",
+          "updatedAt": "2026-10-06T15:49:51Z",
+          "description": "No",
+          "price": "0.68",
+          "marketId": 1249058,
+          "long": false,
+          "quote": {
+            "value": "0.68",
+            "currency": "USD"
+          },
+          "tradable": true
+        }
+      ],
+      "outcomes": "[\"Yes\",\"No\"]",
+      "outcomePrices": "[\"0.3300\",\"0.68\"]",
+      "ep3Status": "OPEN",
+      "status": "MARKET_STATUS_OPEN",
+      "assetPriceTerms": null,
+      "sportsMarketTypeV2": "SPORTS_MARKET_TYPE_FUTURE",
+      "hidden": false,
+      "tags": [],
+      "title": "American League",
+      "feeCoefficient": 0.0695,
+      "bestBidQuote": {
+        "value": "0.3200",
+        "currency": "USD"
+      },
+      "bestAskQuote": {
+        "value": "0.3300",
+        "currency": "USD"
+      },
+      "titleShort": "American League",
+      "ep3SyncedAt": "2026-10-08T11:39:42Z",
+      "minimumTradeQty": 0.01,
+      "comboEnabled": false,
+      "politics": null
+    }
+  ]
+}
