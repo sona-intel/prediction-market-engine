@@ -136,6 +136,9 @@ func TestMarketsAndSnaps(t *testing.T) {
 	if err != nil || len(hist) != 2 || hist[0].YesPPM != 400000 {
 		t.Fatalf("history %+v, %v", hist, err)
 	}
+	if last, err := st.Snaps(ctx, "kalshi", "A", t0, 1); err != nil || len(last) != 1 || last[0].YesPPM != hist[1].YesPPM {
+		t.Fatalf("limit must keep the newest point %+v, %v", last, err)
+	}
 	if n, err := st.PruneSnaps(ctx, t0.Add(30*time.Second)); err != nil || n != 2 {
 		t.Fatalf("pruned %d, %v", n, err)
 	}

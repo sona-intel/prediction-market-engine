@@ -215,10 +215,10 @@ func (s *Store) TopMarkets(ctx context.Context, code string, limit int) ([]TopMa
 	})
 }
 
-// Snaps returns the history of one market, oldest first
+// Snaps returns the newest points of one market since a time, oldest first
 func (s *Store) Snaps(ctx context.Context, code, id string, since time.Time, limit int) ([]venue.Snap, error) {
-	rows, err := s.Pool.Query(ctx, `select ts, yes_ppm, volume_micro, oi_micro, vol24_micro from market_snap
-		where venue = $1 and market_id = $2 and ts >= $3 order by ts limit $4`, code, id, since, limit)
+	rows, err := s.Pool.Query(ctx, `select * from (select ts, yes_ppm, volume_micro, oi_micro, vol24_micro from market_snap
+		where venue = $1 and market_id = $2 and ts >= $3 order by ts desc limit $4) n order by ts`, code, id, since, limit)
 	if err != nil {
 		return nil, err
 	}

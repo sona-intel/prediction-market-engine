@@ -68,6 +68,9 @@ func TestTapeReadsForHIP4(t *testing.T) {
 	if err != nil || len(series) != 2 || !series[0].TS.Equal(t0) || series[0].YesPPM != 450000 || !series[1].TS.Equal(t0.Add(5*time.Minute)) || series[1].YesPPM != 500000 {
 		t.Fatalf("%+v, %v", series, err)
 	}
+	if last, err := st.TapeSeries(ctx, hl, "#10", t0, 5*time.Minute, 1); err != nil || len(last) != 1 || last[0].YesPPM != 500000 {
+		t.Fatalf("limit must keep the newest bucket %+v, %v", last, err)
+	}
 	named, err := st.LargeNamed(ctx, hl, 6, 10)
 	if err != nil || len(named) != 3 || named[0].ID != "3" || named[0].Title != "x" || string(named[0].Taker) != string(a) {
 		t.Fatalf("%+v, %v", named, err)

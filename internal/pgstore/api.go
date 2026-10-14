@@ -94,10 +94,10 @@ func (s *Store) LargeNamed(ctx context.Context, code string, minUSD int64, limit
 	})
 }
 
-// TapeSeries turns a tape-only venue's trades into one point per bucket, holding the last price, oldest first
+// TapeSeries turns a tape-only venue's trades into one point per bucket, holding the last price, keeping the newest buckets and returning them oldest first
 func (s *Store) TapeSeries(ctx context.Context, code, id string, since time.Time, bucket time.Duration, limit int) ([]venue.Snap, error) {
-	rows, err := s.Pool.Query(ctx, `select to_timestamp(floor(extract(epoch from ts)::float8 / $4::float8) * $4::float8) as b, (array_agg(price_ppm order by ts desc, id desc))[1]
-		from trade where venue = $1 and market_id = $2 and ts >= $3 group by b order by b limit $5`, code, id, since, bucket.Seconds(), limit)
+	rows, err := s.Pool.Query(ctx, `select * from (select to_timestamp(floor(extract(epoch from ts)::float8 / $4::float8) * $4::float8) as b, (array_agg(price_ppm order by ts desc, id desc))[1]
+		from trade where venue = $1 and market_id = $2 and ts >= $3 group by b order by b desc limit $5) n order by b`, code, id, since, bucket.Seconds(), limit)
 	if err != nil {
 		return nil, err
 	}
