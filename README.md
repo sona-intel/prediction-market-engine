@@ -44,6 +44,8 @@ docker compose up -d --no-deps pm-postgres pm-collect
 PM_TEST_PG=postgres://pm:...@127.0.0.1:5437/pm go test -race ./...
 ```
 
+`pm-collect once <job>` polls one job a single time by the name the scheduler logs, such as `hyperliquid/wallets`, `levr/wallets` or `hyperliquid/settlement`, and `PM_COLLECT_VENUES` picks which venue's jobs exist.
+
 Tests that need Postgres skip when `PM_TEST_PG` is unset. Settings are `PM_PG_URL`, `PM_COLLECT_VENUES` and `PM_SNAP_KEEP_DAYS`, and every backfill switch stays off by default.
 
 ### Hyperliquid HIP-4
