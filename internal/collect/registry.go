@@ -16,9 +16,10 @@ type Factory func(get func(string) string, sink venue.Sink) ([]Job, error)
 // factories grows as each venue source lands, and a venue without one is skipped with a warning
 func factories() map[string]Factory { return map[string]Factory{} }
 
-// Pruner drops snapshots past retention
+// Pruner drops snapshots and the tape of walletless venues past retention
 type Pruner interface {
 	PruneSnaps(ctx context.Context, before time.Time) (int64, error)
+	PruneTrades(ctx context.Context, code string, before time.Time) (int64, error)
 }
 
 // Build returns the jobs for every enabled venue, plus the housekeeping job
@@ -37,21 +38,41 @@ func Build(cfg Config, get func(string) string, sink venue.Sink, pruner Pruner) 
 		}
 		jobs = append(jobs, js...)
 	}
-	return append(jobs, Job{Source: &housekeeping{pruner: pruner, keep: time.Duration(cfg.KeepDays) * 24 * time.Hour, now: time.Now}, Every: housekeepEvery}), nil
+	hk := &housekeeping{pruner: pruner, keep: time.Duration(cfg.KeepDays) * 24 * time.Hour, now: time.Now}
+	for _, code := range cfg.Venues {
+		if !venue.Catalog[code].Wallets {
+			hk.tapes = append(hk.tapes, code)
+		}
+	}
+	return append(jobs, Job{Source: hk, Every: housekeepEvery}), nil
 }
 
 type housekeeping struct {
 	pruner Pruner
 	keep   time.Duration
+	tapes  []string
 	now    func() time.Time
 }
 
 func (h *housekeeping) Name() string { return "housekeeping" }
 
 func (h *housekeeping) Poll(ctx context.Context) error {
-	n, err := h.pruner.PruneSnaps(ctx, h.now().Add(-h.keep))
-	if err == nil && n > 0 {
+	before := h.now().Add(-h.keep)
+	n, err := h.pruner.PruneSnaps(ctx, before)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
 		slog.Info("pruned snapshots", "rows", n)
 	}
-	return err
+	for _, code := range h.tapes {
+		n, err := h.pruner.PruneTrades(ctx, code, before)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			slog.Info("pruned trades", "venue", code, "rows", n)
+		}
+	}
+	return nil
 }

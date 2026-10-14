@@ -128,7 +128,15 @@ func TestConfig(t *testing.T) {
 	}
 }
 
-type pruner struct{ before time.Time }
+type pruner struct {
+	before time.Time
+	tapes  []string
+}
+
+func (p *pruner) PruneTrades(_ context.Context, code string, _ time.Time) (int64, error) {
+	p.tapes = append(p.tapes, code)
+	return 0, nil
+}
 
 func (p *pruner) PruneSnaps(_ context.Context, before time.Time) (int64, error) {
 	p.before = before
@@ -137,7 +145,7 @@ func (p *pruner) PruneSnaps(_ context.Context, before time.Time) (int64, error) 
 
 func TestBuildAddsHousekeepingAndSkipsVenuesWithoutSources(t *testing.T) {
 	p := &pruner{}
-	jobs, err := collect.Build(collect.Config{Venues: []string{"kalshi"}, KeepDays: 2}, func(string) string { return "" }, nil, p)
+	jobs, err := collect.Build(collect.Config{Venues: []string{"kalshi", "hyperliquid"}, KeepDays: 2}, func(string) string { return "" }, nil, p)
 	if err != nil || len(jobs) != 1 || jobs[0].Source.Name() != "housekeeping" {
 		t.Fatalf("jobs %v, %v", jobs, err)
 	}
@@ -146,5 +154,8 @@ func TestBuildAddsHousekeepingAndSkipsVenuesWithoutSources(t *testing.T) {
 	}
 	if age := time.Since(p.before); age < 47*time.Hour || age > 49*time.Hour {
 		t.Fatalf("pruned before %v ago", age)
+	}
+	if len(p.tapes) != 1 || p.tapes[0] != "kalshi" {
+		t.Fatalf("pruned tapes %v", p.tapes)
 	}
 }
