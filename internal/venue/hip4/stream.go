@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	gapsCursor = "hyperliquid/gaps"
-	staleAfter = 2 * time.Minute
-	readLimit  = 8 << 20
+	gapsCursor   = "hyperliquid/gaps"
+	defaultStale = 2 * time.Minute
+	readLimit    = 8 << 20
 )
 
 type Metrics struct {
@@ -59,6 +59,8 @@ type Stream struct {
 	PingEvery time.Duration
 	// SendEvery spaces subscribe messages under the venue's per-minute cap
 	SendEvery time.Duration
+	// StaleAfter is how long a silent connection lives, and zero means two minutes
+	StaleAfter time.Duration
 	// GapWeight is the info weight a minute that the catch-up after a reconnect may use
 	GapWeight int
 
@@ -74,10 +76,17 @@ func (s *Stream) Poll(ctx context.Context) error {
 		s.lastMsg.Store(time.Now().UnixNano())
 		go s.run(ctx)
 	}
-	if age := time.Since(time.Unix(0, s.lastMsg.Load())); age > staleAfter {
+	if age := time.Since(time.Unix(0, s.lastMsg.Load())); age > s.stale() {
 		return fmt.Errorf("no message for %s", age.Round(time.Second))
 	}
 	return nil
+}
+
+func (s *Stream) stale() time.Duration {
+	if s.StaleAfter > 0 {
+		return s.StaleAfter
+	}
+	return defaultStale
 }
 
 func (s *Stream) run(ctx context.Context) {
@@ -253,7 +262,7 @@ func (s *Stream) change(ctx context.Context, c *websocket.Conn, method string, c
 
 func (s *Stream) read(ctx context.Context, c *websocket.Conn) error {
 	for {
-		_, b, err := c.Read(ctx)
+		_, b, err := readWithin(ctx, c, s.stale())
 		if err != nil {
 			return err
 		}
@@ -280,6 +289,13 @@ func (s *Stream) read(ctx context.Context, c *websocket.Conn) error {
 			slog.Warn("venue error message", "data", string(m.Data))
 		}
 	}
+}
+
+// readWithin ends a connection that stays silent past the ping answers, so a half-open socket cannot hold the stream forever
+func readWithin(ctx context.Context, c *websocket.Conn, d time.Duration) (websocket.MessageType, []byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
+	return c.Read(ctx)
 }
 
 // store writes the side-0 fills of a page and returns the converted trades, oldest first

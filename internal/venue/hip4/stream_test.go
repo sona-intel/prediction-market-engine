@@ -240,3 +240,12 @@ func TestOutcomeListRefreshSubscribesAndUnsubscribes(t *testing.T) {
 		t.Fatalf("subscribed %v", subs)
 	}
 }
+
+func TestSilentConnectionIsReplaced(t *testing.T) {
+	f := newFake(t)
+	f.wsTape = nil
+	s := setup(t, f, venuetest.New())
+	s.StaleAfter = 200 * time.Millisecond
+	start(t, s)
+	waitFor(t, "a second connection", func() bool { _, _, n := f.seen(); return n >= 2 })
+}
