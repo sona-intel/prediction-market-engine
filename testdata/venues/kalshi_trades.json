@@ -1,0 +1,64 @@
+{
+  "trades": [
+    {
+      "count_fp": "16000.00",
+      "created_time": "2026-10-14T21:36:54.950444Z",
+      "is_block_trade": false,
+      "no_price_dollars": "0.9999",
+      "taker_book_side": "ask",
+      "taker_outcome_side": "no",
+      "taker_side": "no",
+      "ticker": "KXMVECROSSCATEGORY-S20269A285568D96-59DA37A1A2C",
+      "trade_id": "0725cd3b-eb31-a5a4-e3c4-7fea09ba65bc",
+      "yes_price_dollars": "0.0001"
+    },
+    {
+      "count_fp": "3051.00",
+      "created_time": "2026-10-14T21:37:07.292597Z",
+      "is_block_trade": false,
+      "no_price_dollars": "0.0870",
+      "taker_book_side": "bid",
+      "taker_outcome_side": "yes",
+      "taker_side": "yes",
+      "ticker": "KXBTC15M-26OCT141745-45",
+      "trade_id": "0725cd3b-1931-98a8-19d6-a10565c1b5bb",
+      "yes_price_dollars": "0.9130"
+    },
+    {
+      "count_fp": "1465.00",
+      "created_time": "2026-10-14T21:37:11.438641Z",
+      "is_block_trade": false,
+      "no_price_dollars": "0.0880",
+      "taker_book_side": "bid",
+      "taker_outcome_side": "yes",
+      "taker_side": "yes",
+      "ticker": "KXBTC15M-26OCT141745-45",
+      "trade_id": "0725cd3d-2639-91db-0f6a-05272e3dc0e3",
+      "yes_price_dollars": "0.9120"
+    },
+    {
+      "count_fp": "1341.33",
+      "created_time": "2026-10-14T21:36:56.977914Z",
+      "is_block_trade": false,
+      "no_price_dollars": "0.8000",
+      "taker_book_side": "ask",
+      "taker_outcome_side": "no",
+      "taker_side": "no",
+      "ticker": "KXITFMATCH-26OCT14STOCUN-STO",
+      "trade_id": "0725cd3b-3001-9d9f-98f7-a79a19e68390",
+      "yes_price_dollars": "0.2000"
+    },
+    {
+      "count_fp": "0.01",
+      "created_time": "2026-10-14T21:37:07.526347Z",
+      "is_block_trade": false,
+      "no_price_dollars": "0.9490",
+      "taker_book_side": "bid",
+      "taker_outcome_side": "yes",
+      "taker_side": "yes",
+      "ticker": "GOVPARTYMA-26-R",
+      "trade_id": "0725cd43-1ef1-a9e1-c023-5f6177e5767c",
+      "yes_price_dollars": "0.0510"
+    }
+  ]
+}

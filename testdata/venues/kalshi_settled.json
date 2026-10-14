@@ -1,0 +1,112 @@
+{
+  "markets": [
+    {
+      "can_close_early": true,
+      "close_time": "2026-10-14T21:30:37Z",
+      "created_time": "2026-10-14T16:01:09.035072Z",
+      "custom_strike": {
+        "cricket_team": "e8a4ade4-044b-41a4-a73d-c0a5fdf9800a"
+      },
+      "early_close_condition": "This market will close and expire after a winner is declared.",
+      "event_ticker": "KXT20MATCH-26OCT141400RRSTRSATLLTN",
+      "exchange_index": 0,
+      "expected_expiration_time": "2026-10-14T22:00:00Z",
+      "expiration_time": "2026-10-16T22:00:00Z",
+      "expiration_value": "RR Stars",
+      "last_price_dollars": "0.9900",
+      "latest_expiration_time": "2026-10-16T22:00:00Z",
+      "market_type": "binary",
+      "no_ask_dollars": "1.0000",
+      "no_bid_dollars": "0.0000",
+      "no_sub_title": "RR Stars",
+      "notional_value_dollars": "1.0000",
+      "occurrence_datetime": "2026-10-14T22:00:00Z",
+      "open_interest_fp": "68891.92",
+      "open_time": "2026-10-14T16:10:00Z",
+      "previous_price_dollars": "0.0000",
+      "previous_yes_ask_dollars": "0.0000",
+      "previous_yes_bid_dollars": "0.0000",
+      "price_level_structure": "linear_cent",
+      "price_ranges": [
+        {
+          "end": "1.0000",
+          "start": "0.0000",
+          "step": "0.0100"
+        }
+      ],
+      "result": "yes",
+      "rules_primary": "If RR Stars wins the Atlanta Lightning vs RR Stars men's professional Atlanta Open T20 cricket match originally scheduled for Oct 14, 2026 at 2:00 PM EDT, then the market resolves to Yes.",
+      "rules_secondary": "If the Atlanta Lightning vs RR Stars men's professional Atlanta Open T20 cricket match originally scheduled for Oct 14, 2026 at 2:00 PM EDT ends in a tie, draw, no result (NR), abandonment, or cancellation, and no official winner is declared, all markets will resolve to $0.50.\nIn the event of a forfeit, disqualification, or concession:\n  If it occurs before the match begins, all markets will resolve to $0.50.\n  If it occurs after the match has begun, and the governing body declares an official winner, the market will resolve based on that result.\nIf play begins but insufficient play occurs to determine an official result, all markets will resolve to $0.50.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "settlement_bounds_type": "default",
+      "settlement_timer_seconds": 240,
+      "settlement_ts": "2026-10-14T21:35:39.104829Z",
+      "settlement_value_dollars": "1.0000",
+      "status": "finalized",
+      "strike_type": "structured",
+      "ticker": "KXT20MATCH-26OCT141400RRSTRSATLLTN-RRSTRS",
+      "title": "RR Stars wins",
+      "updated_time": "2026-10-14T21:35:39.430283Z",
+      "volume_24h_fp": "144958.89",
+      "volume_fp": "144958.89",
+      "yes_ask_dollars": "1.0000",
+      "yes_ask_size_fp": "0.00",
+      "yes_bid_dollars": "0.0000",
+      "yes_bid_size_fp": "0.00",
+      "yes_sub_title": "RR Stars"
+    },
+    {
+      "can_close_early": true,
+      "close_time": "2026-10-14T21:30:37Z",
+      "created_time": "2026-10-14T16:01:09.035072Z",
+      "custom_strike": {
+        "cricket_team": "4ea9fd3d-f534-4c2c-bc56-1b1710b82887"
+      },
+      "early_close_condition": "This market will close and expire after a winner is declared.",
+      "event_ticker": "KXT20MATCH-26OCT141400RRSTRSATLLTN",
+      "exchange_index": 0,
+      "expected_expiration_time": "2026-10-14T22:00:00Z",
+      "expiration_time": "2026-10-16T22:00:00Z",
+      "expiration_value": "RR Stars",
+      "last_price_dollars": "0.0100",
+      "latest_expiration_time": "2026-10-16T22:00:00Z",
+      "market_type": "binary",
+      "no_ask_dollars": "1.0000",
+      "no_bid_dollars": "0.0000",
+      "no_sub_title": "Atlanta Lightning",
+      "notional_value_dollars": "1.0000",
+      "occurrence_datetime": "2026-10-14T22:00:00Z",
+      "open_interest_fp": "57505.02",
+      "open_time": "2026-10-14T16:10:00Z",
+      "previous_price_dollars": "0.0000",
+      "previous_yes_ask_dollars": "0.0000",
+      "previous_yes_bid_dollars": "0.0000",
+      "price_level_structure": "linear_cent",
+      "price_ranges": [
+        {
+          "end": "1.0000",
+          "start": "0.0000",
+          "step": "0.0100"
+        }
+      ],
+      "result": "no",
+      "rules_primary": "If Atlanta Lightning wins the Atlanta Lightning vs RR Stars men's professional Atlanta Open T20 cricket match originally scheduled for Oct 14, 2026 at 2:00 PM EDT, then the market resolves to Yes.",
+      "rules_secondary": "If the Atlanta Lightning vs RR Stars men's professional Atlanta Open T20 cricket match originally scheduled for Oct 14, 2026 at 2:00 PM EDT ends in a tie, draw, no result (NR), abandonment, or cancellation, and no official winner is declared, all markets will resolve to $0.50.\nIn the event of a forfeit, disqualification, or concession:\n  If it occurs before the match begins, all markets will resolve to $0.50.\n  If it occurs after the match has begun, and the governing body declares an official winner, the market will resolve based on that result.\nIf play begins but insufficient play occurs to determine an official result, all markets will resolve to $0.50.\n\nKalshi is not affiliated, associated, authorized, endorsed by, or in any way officially connected with the Governing League. All trademarks, logos, and brand names are the property of their respective owners.",
+      "settlement_bounds_type": "default",
+      "settlement_timer_seconds": 240,
+      "settlement_ts": "2026-10-14T21:35:39.104829Z",
+      "settlement_value_dollars": "0.0000",
+      "status": "finalized",
+      "strike_type": "structured",
+      "ticker": "KXT20MATCH-26OCT141400RRSTRSATLLTN-ATLLTN",
+      "title": "Atlanta Lightning wins",
+      "updated_time": "2026-10-14T21:35:39.430283Z",
+      "volume_24h_fp": "117531.90",
+      "volume_fp": "117531.90",
+      "yes_ask_dollars": "1.0000",
+      "yes_ask_size_fp": "0.00",
+      "yes_bid_dollars": "0.0000",
+      "yes_bid_size_fp": "0.00",
+      "yes_sub_title": "Atlanta Lightning"
+    }
+  ]
+}
