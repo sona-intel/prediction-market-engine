@@ -245,6 +245,13 @@ func TestLargeTradesOfARecordedVenue(t *testing.T) {
 	}
 	expectProblem(t, get(t, srv, largePath+"?venue=polymarket-us"), http.StatusBadRequest, "invalid_query")
 	expectProblem(t, get(t, srv, largePath+"?venue=kalshi&min_usd=9999"), http.StatusBadRequest, "invalid_query")
+	if k, hl := dig(t, k, "min_usd"), dig(t, get(t, srv, largePath+"?venue=hyperliquid").json(t), "min_usd"); k != float64(10000) || hl != float64(1000) {
+		t.Fatalf("floors %v and %v", k, hl)
+	}
+	if f := dig(t, get(t, srv, largePath+"?venue=hyperliquid&min_usd=2500").json(t), "min_usd"); f != float64(2500) {
+		t.Fatalf("asked floor %v", f)
+	}
+	expectProblem(t, get(t, srv, largePath+"?venue=hyperliquid&min_usd=999"), http.StatusBadRequest, "invalid_query")
 }
 
 func TestMarketHistory(t *testing.T) {

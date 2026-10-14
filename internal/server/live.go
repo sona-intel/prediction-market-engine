@@ -127,7 +127,7 @@ func (a *app) largeTrades(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			return nil, false, err
 		}
-		minUSD, err := minUSDParam(q)
+		minUSD, err := minUSDParam(q, live.MinTradeUSD)
 		if err != nil {
 			return nil, false, err
 		}
@@ -169,14 +169,14 @@ func (a *app) trades() (live.Snapshot[live.Trade], bool) {
 	return a.feed.Trades()
 }
 
-func minUSDParam(q url.Values) (float64, error) {
+func minUSDParam(q url.Values, floor float64) (float64, error) {
 	if !q.Has("min_usd") {
-		return live.MinTradeUSD, nil
+		return floor, nil
 	}
 	v, err := strconv.ParseFloat(q.Get("min_usd"), 64)
 	// ParseFloat accepts NaN and Inf, which no bound would catch
-	if err != nil || !(v >= live.MinTradeUSD) || v > 1e12 {
-		return 0, &requestError{codeInvalidQuery, "The min_usd must be a number from 10000 to 1000000000000."}
+	if err != nil || !(v >= floor) || v > 1e12 {
+		return 0, &requestError{codeInvalidQuery, "The min_usd must be a number from " + strconv.FormatFloat(floor, 'f', -1, 64) + " to 1000000000000."}
 	}
 	return v, nil
 }

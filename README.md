@@ -61,7 +61,7 @@ curl -s 'http://127.0.0.1:8191/internal/v1/pm/markets/top?venue=kalshi&limit=3'
 curl -s 'http://127.0.0.1:8191/internal/v1/leaderboards/pnl?venue=levr'
 ```
 
-A venue with no trader ids (`kalshi`, `polymarket-us`) answers 400 on the trader and leaderboard routes. Hyperliquid fills are small, so `pm/trades/large?venue=hyperliquid` is often empty at the $10,000 floor.
+A venue with no trader ids (`kalshi`, `polymarket-us`) answers 400 on the trader and leaderboard routes. Hyperliquid fills are smaller, so `pm/trades/large?venue=hyperliquid` starts at $1,000 rather than the $10,000 of Polymarket and Kalshi, and every answer gives its floor in `min_usd`.
 
 ### Hyperliquid HIP-4
 

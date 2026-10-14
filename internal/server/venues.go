@@ -13,6 +13,7 @@ import (
 
 	"pm/internal/hip4"
 	"pm/internal/levr"
+	"pm/internal/live"
 	"pm/internal/pgstore"
 	"pm/internal/venue"
 )
@@ -49,13 +50,17 @@ type Venues interface {
 	LevrBoard(ctx context.Context, board string, limit, offset int) (pgstore.LevrPage, error)
 }
 
-type venueFacts struct{ mode, source, note string }
+type venueFacts struct {
+	mode, source, note string
+	// largeUSD is the default and least min_usd of the venue's large trades
+	largeUSD float64
+}
 
 var venueFact = map[string]venueFacts{
-	venue.Hyperliquid:  {"recorded", sourceHyperInfo, "Every Hyperliquid HIP-4 outcome fill since recording started, read from the public WebSocket, with both wallets. A gap is a reconnect whose catch-up page did not reach the stored tape. Results appear once a settlement fill is found, so some settled outcomes may still show no result."},
-	venue.Kalshi:       {"partial_tape", sourceKalshi, "Market snapshots of the 500 markets with the most 24-hour volume, and only the prints that cost the taker at least $10,000. Kalshi publishes no trader ids. History starts when recording started."},
-	venue.PolymarketUS: {"snapshot_only", sourcePolyUS, "Market snapshots of the busiest markets. The gateway has no trade tape and no trader ids. Volume and open interest are share counts valued in dollars. History starts when recording started."},
-	venue.Levr:         {"recorded", sourceLevr, "Leveraged positions, liquidations and settlements of Levr Bet on Monad, read from the venue's unofficial indexer. Payouts are worked out from redemption rows, and void refunds and the partial return of a liquidation are not published. Positions opened before recording started are missing."},
+	venue.Hyperliquid:  {"recorded", sourceHyperInfo, "Every Hyperliquid HIP-4 outcome fill since recording started, read from the public WebSocket, with both wallets. A gap is a reconnect whose catch-up page did not reach the stored tape. Results appear once a settlement fill is found, so some settled outcomes may still show no result. Its fills are smaller than Polymarket's and Kalshi's, so its large trades start at $1,000.", 1000},
+	venue.Kalshi:       {"partial_tape", sourceKalshi, "Market snapshots of the 500 markets with the most 24-hour volume, and only the prints that cost the taker at least $10,000. Kalshi publishes no trader ids. History starts when recording started.", live.MinTradeUSD},
+	venue.PolymarketUS: {"snapshot_only", sourcePolyUS, "Market snapshots of the busiest markets. The gateway has no trade tape and no trader ids. Volume and open interest are share counts valued in dollars. History starts when recording started.", 0},
+	venue.Levr:         {"recorded", sourceLevr, "Leveraged positions, liquidations and settlements of Levr Bet on Monad, read from the venue's unofficial indexer. Payouts are worked out from redemption rows, and void refunds and the partial return of a liquidation are not published. Positions opened before recording started are missing.", 0},
 }
 
 var venueNames = map[string]string{venuePolymarket: "Polymarket"}
@@ -300,6 +305,7 @@ func knownUSD(ok bool, micro int64) *float64 {
 type venueLarge struct {
 	Kind     string        `json:"kind"`
 	Venue    string        `json:"venue"`
+	MinUSD   float64       `json:"min_usd"`
 	Items    []venueTrade  `json:"items"`
 	Source   string        `json:"source"`
 	Coverage venueCoverage `json:"coverage"`
@@ -327,7 +333,7 @@ func (a *app) venueLarge(w http.ResponseWriter, req *http.Request, code string) 
 		if err != nil {
 			return nil, err
 		}
-		minUSD, err := minUSDParam(q)
+		minUSD, err := minUSDParam(q, venueFact[code].largeUSD)
 		if err != nil {
 			return nil, err
 		}
@@ -339,7 +345,7 @@ func (a *app) venueLarge(w http.ResponseWriter, req *http.Request, code string) 
 		if err != nil {
 			return nil, err
 		}
-		out := venueLarge{Kind: "pm_large_trades", Venue: code, Items: make([]venueTrade, 0, len(ts)), Source: venueFact[code].source, Coverage: cov}
+		out := venueLarge{Kind: "pm_large_trades", Venue: code, MinUSD: minUSD, Items: make([]venueTrade, 0, len(ts)), Source: venueFact[code].source, Coverage: cov}
 		for _, t := range ts {
 			item := venueTrade{
 				ID: t.ID, Time: t.TS.UTC().Format(time.RFC3339), MarketID: t.MarketID, Question: t.Title, Side: t.Side,
