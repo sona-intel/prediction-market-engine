@@ -3,6 +3,7 @@ package collect_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -157,5 +158,26 @@ func TestBuildAddsHousekeepingAndSkipsVenuesWithoutSources(t *testing.T) {
 	}
 	if len(p.tapes) != 1 || p.tapes[0] != "kalshi" {
 		t.Fatalf("pruned tapes %v", p.tapes)
+	}
+}
+
+func TestBuildMakesTheJobsOfHyperliquid(t *testing.T) {
+	env := map[string]string{"PM_HL_META_EVERY": "3m"}
+	cfg := collect.Config{Venues: []string{"hyperliquid"}, KeepDays: 2}
+	jobs, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, j := range jobs {
+		names = append(names, j.Source.Name())
+	}
+	want := []string{"hyperliquid/stream", "housekeeping"}
+	if !slices.Equal(names, want) || jobs[0].Every != 30*time.Second {
+		t.Fatalf("jobs %v", names)
+	}
+	env["PM_HL_GAP_WEIGHT"] = "0"
+	if _, err := collect.Build(cfg, func(k string) string { return env[k] }, nil, &pruner{}, prometheus.NewRegistry()); !errors.Is(err, collect.ErrConfig) {
+		t.Fatalf("zero weight gave %v", err)
 	}
 }

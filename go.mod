@@ -3,6 +3,7 @@ module pm
 go 1.27.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/duckdb/duckdb-go/v2 v2.10506.0
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/jackc/pgx/v5 v5.11.0

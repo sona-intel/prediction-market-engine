@@ -62,3 +62,16 @@ func Duration(get func(string) string, key string, def time.Duration) (time.Dura
 	}
 	return d, nil
 }
+
+// Int reads a positive whole number setting and falls back to def when it is unset
+func Int(get func(string) string, key string, def int) (int, error) {
+	s := get(key)
+	if s == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("%w: %s must be a positive number", ErrConfig, key)
+	}
+	return n, nil
+}

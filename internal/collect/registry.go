@@ -17,7 +17,7 @@ type Factory func(get func(string) string, st venue.Store, reg prometheus.Regist
 
 // factories grows as each venue source lands, and a venue without one is skipped with a warning
 func factories() map[string]Factory {
-	return map[string]Factory{}
+	return map[string]Factory{venue.Hyperliquid: hyperliquid}
 }
 
 // Pruner drops snapshots and the tape of walletless venues past retention
