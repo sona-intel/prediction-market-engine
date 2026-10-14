@@ -48,6 +48,21 @@ PM_TEST_PG=postgres://pm:...@127.0.0.1:5437/pm go test -race ./...
 
 Tests that need Postgres skip when `PM_TEST_PG` is unset. Settings are `PM_PG_URL`, `PM_COLLECT_VENUES` and `PM_SNAP_KEEP_DAYS`, and every backfill switch stays off by default.
 
+### Serving the venues
+
+`pm-api` reads `pm-postgres` through a pool of 4 connections that opens on first use, with `default_transaction_read_only=on` in `PM_PG_URL`, so it only ever reads. While Postgres is down the venue routes answer 503 `upstream_unavailable` with `Retry-After: 1`, and the Polymarket routes keep answering. Without `PM_PG_URL` every venue route answers 503.
+
+The `venue` query parameter on `pm/markets/top`, `pm/trades/large`, `traders/{wallet}` and `leaderboards/{board}` defaults to `polymarket`, and that path is the code that ran before it existed. `GET /internal/v1/pm/venues` and `GET /internal/v1/pm/markets/{venue}/{id}/history` are new, and `pm-api/openapi.yaml` describes all of it.
+
+```sh
+docker compose up -d --no-deps pm-api
+curl -s http://127.0.0.1:8191/internal/v1/pm/venues
+curl -s 'http://127.0.0.1:8191/internal/v1/pm/markets/top?venue=kalshi&limit=3'
+curl -s 'http://127.0.0.1:8191/internal/v1/leaderboards/pnl?venue=levr'
+```
+
+A venue with no trader ids (`kalshi`, `polymarket-us`) answers 400 on the trader and leaderboard routes. Hyperliquid fills are small, so `pm/trades/large?venue=hyperliquid` is often empty at the $10,000 floor.
+
 ### Hyperliquid HIP-4
 
 One WebSocket connection follows every outcome and subscribes to side 0 only, because the two sides of an outcome carry the same fills mirrored (same hash, time and size, prices that sum to 1, wallets swapped). On the live feed 5,135 of 5,135 side-0 fills had exactly one twin on side 1. The outcome list is re-read every `PM_HL_META_EVERY` (5m), and outcomes that leave it are unsubscribed and marked closed. After a restart or reconnect, `recentTrades` is called once per coin that had a stored tape, paced to `PM_HL_GAP_WEIGHT` weight a minute (300), and a gap is counted when that page starts after the newest stored trade. The count is `pm_hip4_gaps_total` and the `hyperliquid/gaps` cursor. Rows with a price outside 0 to 1, a bad wallet or an odd size are skipped and counted in `pm_hip4_trades_skipped_total`. `PM_HL_URL` overrides the host.
@@ -72,7 +87,7 @@ Fixtures for both venues are in `testdata/venues` with the recorder that wrote t
 The keyless API publishes no trader ids, so Kalshi gets market data and large prints only, and its tape is pruned after `PM_SNAP_KEEP_DAYS`. Three jobs share one limiter (`PM_KALSHI_RPS`, 2) and the 429 backoff, since Kalshi sends no Retry-After.
 
 - `markets` sweeps every open market with `mve_filter=exclude` each `PM_KALSHI_MARKETS_EVERY` (10m), about 60 pages of 1,000, and snapshots the `PM_KALSHI_TOP` (500) with the most 24 hour volume. Price is the last trade, or the middle of the book when nothing has traded. Volume and open interest are contract counts, which equal notional dollars. Markets missing from a full sweep are marked closed.
-- `trades` reads `/markets/trades` each `PM_KALSHI_EVERY` (10s), about 165 prints a second, rewinds the cursor 5 seconds so late prints are caught, and keeps prints that cost the taker at least `PM_KALSHI_MIN_USD` (10,000, the same constant as the Polymarket live feed). The side column is the taker side (yes or no), and combo tickers (`KXMVE`) are dropped as the market sweep excludes them. A poll that hits its 30 page cap counts a gap in `pm_kalshi_gaps_total`.
+- `trades` reads `/markets/trades` each `PM_KALSHI_EVERY` (10s), about 165 prints a second, rewinds the cursor 5 seconds so late prints are caught, and keeps prints that cost the taker at least `PM_KALSHI_MIN_USD` (10,000, the same constant as the Polymarket live feed). The side column is the taker side (yes or no), and combo tickers (`KXMVE`) are dropped as the market sweep excludes them. A poll that hits its 30 page cap counts a gap in `pm_kalshi_gaps_total` and in the `kalshi/gaps` cursor, which the API reports.
 - `settled` copies results of markets settled since the last poll (`PM_KALSHI_SETTLE_EVERY`, 5m) onto markets already recorded.
 
 The `/historical` stitch is not built, so history starts at deploy.

@@ -4,7 +4,10 @@ services:
     image: sona/pm-api:dev
     restart: unless-stopped
     mem_limit: 384m
-    environment: { GOMEMLIMIT: 150MiB, PM_DB: /data/pm.duckdb }
+    environment:
+      GOMEMLIMIT: 150MiB
+      PM_DB: /data/pm.duckdb
+      PM_PG_URL: "postgres://pm_engine:${PM_PG_ENGINE_PASSWORD:?set PM_PG_ENGINE_PASSWORD in services/.env}@pm-postgres:5432/pm?default_transaction_read_only=on"
     volumes: ["./data:/data:ro"]
     tmpfs: ["/tmp"]
     ports: ["127.0.0.1:8191:8080"]

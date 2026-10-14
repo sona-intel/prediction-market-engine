@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"pm/internal/live"
+	"pm/internal/pgstore"
 	"pm/internal/server"
 	"pm/internal/store"
 )
@@ -63,8 +64,18 @@ func serve() error {
 	go s.Run(ctx)
 	feed := live.New(live.Options{})
 	go feed.Run(ctx)
+	// the pool connects on first use, so the service starts and answers 503 on the venue routes while Postgres is down
+	var venues server.Venues
+	if dsn := os.Getenv("PM_PG_URL"); dsn != "" {
+		pg, err := pgstore.Connect(ctx, dsn, "")
+		if err != nil {
+			return errors.Join(err, s.Close())
+		}
+		defer pg.Close()
+		venues = pg
+	}
 	err := server.Run(ctx,
-		server.NewServer(server.Addr, server.NewLive(s, feed, m)),
+		server.NewServer(server.Addr, server.NewFull(s, feed, venues, m)),
 		server.Debug(server.DebugAddr, promhttp.HandlerFor(reg, promhttp.HandlerOpts{})))
 	return errors.Join(err, s.Close())
 }
