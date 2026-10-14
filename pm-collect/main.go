@@ -103,12 +103,12 @@ func serve(ctx context.Context, get func(string) string) error {
 			return err
 		}
 	}
-	jobs, err := collect.Build(cfg, get, st, st)
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	jobs, err := collect.Build(cfg, get, st, st, reg)
 	if err != nil {
 		return err
 	}
-	reg := prometheus.NewRegistry()
-	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	sched := &collect.Scheduler{Jobs: jobs, Health: st, Metrics: collect.NewMetrics(reg)}
 
 	mux := http.NewServeMux()

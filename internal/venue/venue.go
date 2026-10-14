@@ -78,9 +78,19 @@ type Sink interface {
 	SetCursor(ctx context.Context, source, value string) error
 }
 
+// Store is the sink plus the reads a source needs to avoid asking for what is already recorded
+type Store interface {
+	Sink
+	LastTradeTS(ctx context.Context, code, marketID string) (time.Time, bool, error)
+	OpenMarketIDs(ctx context.Context, code string) ([]string, error)
+	MarkClosed(ctx context.Context, code string, ids []string) error
+	ExpiredMarketIDs(ctx context.Context, code string, before time.Time, limit int) ([]string, error)
+	SetResult(ctx context.Context, code, id, status, result string) error
+}
+
 // Catalog describes the venues pm-collect can record, keyed by code
 var Catalog = map[string]Info{
-	Hyperliquid:  {Code: Hyperliquid, Name: "Hyperliquid HIP-4", Quote: "USD", Wallets: true},
+	Hyperliquid:  {Code: Hyperliquid, Name: "Hyperliquid HIP-4", Quote: "USDC", Wallets: true},
 	Kalshi:       {Code: Kalshi, Name: "Kalshi", Quote: "USD"},
 	PolymarketUS: {Code: PolymarketUS, Name: "Polymarket US", Quote: "USD"},
 	Levr:         {Code: Levr, Name: "Levr Bet", Quote: "USDC", Wallets: true},

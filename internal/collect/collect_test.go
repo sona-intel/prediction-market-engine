@@ -145,7 +145,7 @@ func (p *pruner) PruneSnaps(_ context.Context, before time.Time) (int64, error) 
 
 func TestBuildAddsHousekeepingAndSkipsVenuesWithoutSources(t *testing.T) {
 	p := &pruner{}
-	jobs, err := collect.Build(collect.Config{Venues: []string{"kalshi", "hyperliquid"}, KeepDays: 2}, func(string) string { return "" }, nil, p)
+	jobs, err := collect.Build(collect.Config{Venues: []string{"kalshi", "levr"}, KeepDays: 2}, func(string) string { return "" }, nil, p, prometheus.NewRegistry())
 	if err != nil || len(jobs) != 1 || jobs[0].Source.Name() != "housekeeping" {
 		t.Fatalf("jobs %v, %v", jobs, err)
 	}

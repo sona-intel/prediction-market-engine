@@ -12,7 +12,7 @@ import (
 
 const chunk = 1000
 
-var _ venue.Sink = (*Store)(nil)
+var _ venue.Store = (*Store)(nil)
 
 // Cursor returns an empty value for a source that has none yet
 func (s *Store) Cursor(ctx context.Context, source string) (string, error) {
@@ -64,8 +64,9 @@ func (s *Store) UpsertMarkets(ctx context.Context, ms []venue.Market) error {
 			closeTS = &m.Close
 		}
 		b.Queue(`insert into market (venue, id, title, kind, close_ts, status, result) values ($1, $2, $3, $4, $5, $6, $7)
-			on conflict (venue, id) do update set title = excluded.title, kind = excluded.kind,
-			close_ts = excluded.close_ts, status = excluded.status, result = excluded.result`,
+			on conflict (venue, id) do update set title = excluded.title, kind = excluded.kind, close_ts = excluded.close_ts,
+			status = case when market.result <> '' then market.status else excluded.status end,
+			result = case when excluded.result = '' then market.result else excluded.result end`,
 			m.Venue, m.ID, m.Title, m.Kind, closeTS, m.Status, m.Result)
 	}, nil)
 }
@@ -149,6 +150,37 @@ func (s *Store) OpenMarketIDs(ctx context.Context, code string) ([]string, error
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
+// MarkClosed flags markets that left a venue's live list, keeping any result already recorded
+func (s *Store) MarkClosed(ctx context.Context, code string, ids []string) error {
+	_, err := s.Pool.Exec(ctx, `update market set status = 'closed' where venue = $1 and id = any($2) and status = 'open'`, code, ids)
+	return err
+}
+
+// ExpiredMarketIDs lists unsettled markets whose close time has passed, newest close first
+func (s *Store) ExpiredMarketIDs(ctx context.Context, code string, before time.Time, limit int) ([]string, error) {
+	rows, err := s.Pool.Query(ctx, `select id from market where venue = $1 and result = '' and close_ts < $2
+		order by close_ts desc, id limit $3`, code, before, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
+func (s *Store) SetResult(ctx context.Context, code, id, status, result string) error {
+	_, err := s.Pool.Exec(ctx, `update market set status = $3, result = $4 where venue = $1 and id = $2`, code, id, status, result)
+	return err
+}
+
+// LastTradeTS returns the time of the newest stored trade of a market
+func (s *Store) LastTradeTS(ctx context.Context, code, marketID string) (time.Time, bool, error) {
+	var ts *time.Time
+	err := s.Pool.QueryRow(ctx, `select max(ts) from trade where venue = $1 and market_id = $2`, code, marketID).Scan(&ts)
+	if err != nil || ts == nil {
+		return time.Time{}, false, err
+	}
+	return *ts, true, nil
 }
 
 type TopMarket struct {

@@ -188,3 +188,54 @@ func TestBatchesPastTheChunk(t *testing.T) {
 		t.Fatalf("inserted %d, %v", n, err)
 	}
 }
+
+func TestResultSurvivesAnOpenUpsert(t *testing.T) {
+	st := pgtest.New(t)
+	ctx := t.Context()
+	open := venue.Market{Venue: "polymarket-us", ID: "A", Title: "Alpha", Close: t0, Status: "open"}
+	if err := st.UpsertMarkets(ctx, []venue.Market{open, {Venue: "polymarket-us", ID: "B", Title: "Beta", Close: t0.Add(time.Hour), Status: "open"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetResult(ctx, "polymarket-us", "A", "resolved", "yes"); err != nil {
+		t.Fatal(err)
+	}
+	open.Title = "Alpha renamed"
+	if err := st.UpsertMarkets(ctx, []venue.Market{open}); err != nil {
+		t.Fatal(err)
+	}
+	m, _, _ := st.Market(ctx, "polymarket-us", "A")
+	if m.Result != "yes" || m.Status != "resolved" || m.Title != "Alpha renamed" {
+		t.Fatalf("%+v", m)
+	}
+	ids, err := st.ExpiredMarketIDs(ctx, "polymarket-us", t0.Add(2*time.Hour), 10)
+	if err != nil || len(ids) != 1 || ids[0] != "B" {
+		t.Fatalf("expired %v, %v", ids, err)
+	}
+	if err := st.MarkClosed(ctx, "polymarket-us", []string{"A", "B"}); err != nil {
+		t.Fatal(err)
+	}
+	if a, _, _ := st.Market(ctx, "polymarket-us", "A"); a.Status != "resolved" {
+		t.Fatalf("a closed over its result: %+v", a)
+	}
+	if b, _, _ := st.Market(ctx, "polymarket-us", "B"); b.Status != "closed" {
+		t.Fatalf("b %+v", b)
+	}
+}
+
+func TestLastTradeTS(t *testing.T) {
+	st := pgtest.New(t)
+	ctx := t.Context()
+	if _, ok, err := st.LastTradeTS(ctx, "hyperliquid", "#10"); ok || err != nil {
+		t.Fatalf("empty market gave %v, %v", ok, err)
+	}
+	ts := []venue.Trade{
+		{Venue: "hyperliquid", ID: "1", MarketID: "#10", TS: t0, Side: "buy"},
+		{Venue: "hyperliquid", ID: "2", MarketID: "#10", TS: t0.Add(time.Minute), Side: "buy"},
+	}
+	if _, err := st.InsertTrades(ctx, ts); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := st.LastTradeTS(ctx, "hyperliquid", "#10"); err != nil || !ok || !got.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("got %v, %v, %v", got, ok, err)
+	}
+}

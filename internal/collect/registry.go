@@ -5,16 +5,20 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"pm/internal/venue"
 )
 
 const housekeepEvery = time.Hour
 
 // Factory builds the jobs of one venue from its settings
-type Factory func(get func(string) string, sink venue.Sink) ([]Job, error)
+type Factory func(get func(string) string, st venue.Store, reg prometheus.Registerer) ([]Job, error)
 
 // factories grows as each venue source lands, and a venue without one is skipped with a warning
-func factories() map[string]Factory { return map[string]Factory{} }
+func factories() map[string]Factory {
+	return map[string]Factory{}
+}
 
 // Pruner drops snapshots and the tape of walletless venues past retention
 type Pruner interface {
@@ -23,7 +27,7 @@ type Pruner interface {
 }
 
 // Build returns the jobs for every enabled venue, plus the housekeeping job
-func Build(cfg Config, get func(string) string, sink venue.Sink, pruner Pruner) ([]Job, error) {
+func Build(cfg Config, get func(string) string, st venue.Store, pruner Pruner, reg prometheus.Registerer) ([]Job, error) {
 	var jobs []Job
 	fs := factories()
 	for _, code := range cfg.Venues {
@@ -32,7 +36,7 @@ func Build(cfg Config, get func(string) string, sink venue.Sink, pruner Pruner) 
 			slog.Warn("venue has no source yet", "venue", code)
 			continue
 		}
-		js, err := f(get, sink)
+		js, err := f(get, st, reg)
 		if err != nil {
 			return nil, err
 		}
