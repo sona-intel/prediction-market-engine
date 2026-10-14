@@ -4,9 +4,6 @@ package live
 import (
 	"context"
 	"encoding/json/v2"
-	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -15,6 +12,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"pm/internal/httpx"
 )
 
 const (
@@ -27,7 +26,6 @@ const (
 	eventCount   = 50
 	tradeCount   = 200
 	marketsEach  = 10
-	bodyLimit    = 32 << 20
 	pollEvery    = 60 * time.Second
 	clientWindow = 10 * time.Second
 )
@@ -76,6 +74,7 @@ type Options struct {
 
 type Poller struct {
 	opt Options
+	cli *httpx.Client
 
 	mu     sync.RWMutex
 	events *Snapshot[Event]
@@ -98,7 +97,7 @@ func New(opt Options) *Poller {
 	if opt.Now == nil {
 		opt.Now = time.Now
 	}
-	return &Poller{opt: opt}
+	return &Poller{opt: opt, cli: &httpx.Client{HTTP: opt.Client, UserAgent: userAgent}}
 }
 
 func (p *Poller) Run(ctx context.Context) {
@@ -166,27 +165,6 @@ func (p *Poller) Trades() (Snapshot[Trade], bool) {
 
 /* Fetching */
 
-var errStatus = errors.New("unexpected status")
-
-func (p *Poller) get(ctx context.Context, base string, q url.Values, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"?"+q.Encode(), nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Accept", "application/json")
-	resp, err := p.opt.Client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
-		return fmt.Errorf("%w: %d", errStatus, resp.StatusCode)
-	}
-	return json.UnmarshalRead(io.LimitReader(resp.Body, bodyLimit), out)
-}
-
 type gammaEvent struct {
 	ID        string        `json:"id"`
 	Slug      string        `json:"slug"`
@@ -213,18 +191,18 @@ func (p *Poller) fetchEvents(ctx context.Context) ([]Event, error) {
 		"limit":     {strconv.Itoa(eventCount)},
 	}
 	var raw []gammaEvent
-	if err := p.get(ctx, p.opt.GammaURL, q, &raw); err != nil {
+	if err := p.cli.Get(ctx, p.opt.GammaURL, q, &raw); err != nil {
 		return nil, err
 	}
 	out := make([]Event, 0, len(raw))
 	for _, e := range raw {
 		ev := Event{
 			ID: e.ID, Slug: e.Slug, Title: e.Title, EndDate: e.EndDate,
-			Volume24hUSD: finite(e.Volume24h), LiquidityUSD: finite(e.Liquidity),
+			Volume24hUSD: httpx.Finite(e.Volume24h), LiquidityUSD: httpx.Finite(e.Liquidity),
 			Markets: []Market{},
 		}
 		if e.Volume != nil {
-			v := finite(*e.Volume)
+			v := httpx.Finite(*e.Volume)
 			ev.VolumeTotalUSD = &v
 		}
 		for _, m := range e.Markets {
@@ -250,7 +228,7 @@ func parsePrices(s string) []float64 {
 		if err != nil {
 			return []float64{}
 		}
-		prices = append(prices, finite(f))
+		prices = append(prices, httpx.Finite(f))
 	}
 	return prices
 }
@@ -273,25 +251,18 @@ func (p *Poller) fetchTrades(ctx context.Context) ([]Trade, error) {
 		"limit":        {strconv.Itoa(tradeCount)},
 	}
 	var raw []dataTrade
-	if err := p.get(ctx, p.opt.DataURL, q, &raw); err != nil {
+	if err := p.cli.Get(ctx, p.opt.DataURL, q, &raw); err != nil {
 		return nil, err
 	}
 	out := make([]Trade, 0, len(raw))
 	for _, t := range raw {
-		usd := math.Round(finite(t.Size)*finite(t.Price)*100) / 100
+		usd := math.Round(httpx.Finite(t.Size)*httpx.Finite(t.Price)*100) / 100
 		out = append(out, Trade{
 			Tx: t.Tx, Time: time.Unix(t.Time, 0).UTC(), Wallet: t.Wallet, Question: t.Title,
-			Side: t.Side, Outcome: t.Outcome, Size: finite(t.Size), Price: finite(t.Price), USD: usd,
+			Side: t.Side, Outcome: t.Outcome, Size: httpx.Finite(t.Size), Price: httpx.Finite(t.Price), USD: usd,
 		})
 	}
 	// the newest come first whatever order the upstream used
 	slices.SortStableFunc(out, func(a, b Trade) int { return b.Time.Compare(a.Time) })
 	return out, nil
-}
-
-func finite(f float64) float64 {
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0
-	}
-	return f
 }
