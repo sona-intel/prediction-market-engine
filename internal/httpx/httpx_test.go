@@ -3,6 +3,7 @@ package httpx_test
 import (
 	"context"
 	"errors"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -134,5 +135,30 @@ func TestRetriesBackOffFurtherWithoutRetryAfter(t *testing.T) {
 	_ = client(3, &slept).Get(t.Context(), srv.URL, nil, &out)
 	if len(slept) != 3 || slept[0] > 1500*time.Millisecond || slept[2] < 4*time.Second {
 		t.Fatalf("slept %v", slept)
+	}
+}
+
+func TestPostSendsJSONAndRetriesOn429(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/json" || string(b) != `{"type":"x"}` {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`{"n":3}`))
+	}))
+	defer srv.Close()
+	var out struct {
+		N int `json:"n"`
+	}
+	var slept []time.Duration
+	err := client(2, &slept).Post(t.Context(), srv.URL, map[string]string{"type": "x"}, &out)
+	if err != nil || out.N != 3 || len(slept) != 1 {
+		t.Fatalf("got %v, %v, slept %v", out, err, slept)
 	}
 }

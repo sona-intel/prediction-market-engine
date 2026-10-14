@@ -2,6 +2,7 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -25,7 +26,7 @@ const (
 
 var ErrStatus = errors.New("unexpected status")
 
-// Client sends GETs through the limiter and retries 429 answers up to Retries times, so a zero Retries never retries
+// Client sends requests through the limiter and retries 429 answers up to Retries times, so a zero Retries never retries
 type Client struct {
 	HTTP      *http.Client
 	UserAgent string
@@ -40,11 +41,24 @@ func (c *Client) Get(ctx context.Context, base string, q url.Values, out any) er
 	if len(q) > 0 {
 		target += "?" + q.Encode()
 	}
+	return c.do(ctx, http.MethodGet, target, nil, out)
+}
+
+// Post sends body as JSON and decodes the answer, with the same limiter and retries as Get
+func (c *Client) Post(ctx context.Context, target string, body, out any) error {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, target, b, out)
+}
+
+func (c *Client) do(ctx context.Context, method, target string, body []byte, out any) error {
 	for attempt := 0; ; attempt++ {
 		if err := c.Limiter.Wait(ctx); err != nil {
 			return err
 		}
-		wait, err := c.once(ctx, target, attempt, out)
+		wait, err := c.once(ctx, method, target, body, attempt, out)
 		if wait == 0 || attempt >= c.Retries {
 			return err
 		}
@@ -59,10 +73,17 @@ func (c *Client) Get(ctx context.Context, base string, q url.Values, out any) er
 }
 
 // once returns a nonzero wait when the answer was a 429
-func (c *Client) once(ctx context.Context, target string, attempt int, out any) (time.Duration, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+func (c *Client) once(ctx context.Context, method, target string, body []byte, attempt int, out any) (time.Duration, error) {
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, rd)
 	if err != nil {
 		return 0, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("User-Agent", c.UserAgent)
 	req.Header.Set("Accept", "application/json")
