@@ -79,7 +79,7 @@ The `/historical` stitch is not built, so history starts at deploy.
 
 ### Levr Bet
 
-Positions, redemptions, liquidations and game settlements come from the unofficial Subsquid GraphQL, which the venue does not document. One job (`levr/positions`, every `PM_LEVR_EVERY`, 60s) walks the tables in a fixed order, opened first, and keeps a cursor per table in the `cursor` table (event ids sort by block). A table that errors is skipped and counted in `pm_levr_table_errors_total`, and the poll fails only when every table does. The over/under tables exist but hold no rows today.
+Positions, redemptions, liquidations and game settlements come from the unofficial Subsquid GraphQL, which the venue does not document. One job (`levr/positions`, every `PM_LEVR_EVERY`, 60s) walks the tables in a fixed order, opened first, and keeps a cursor per table in the `cursor` table (event ids sort by block). A table that errors is skipped and counted in `pm_levr_table_errors_total`, and the poll fails only when every table does. While a positions table is down, the tables that close its positions wait with their cursors unmoved, so no close is lost as an orphan. The over/under tables exist but hold no rows today.
 
 What the real rows give:
 

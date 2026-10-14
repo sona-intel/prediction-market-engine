@@ -223,6 +223,16 @@ func TestPositionFromRecordedRow(t *testing.T) {
 }
 
 // the venue's own aggregate reports a payout of 15,318,784 for this position, within a micro-USDC of the sum of the stake, profit and fees
+func TestPositionWithAnUnknownSideIsRejected(t *testing.T) {
+	o := rows[vl.Opened](t, "levr_opened.json", ft+"PositionOpeneds")[1]
+	for _, side := range []int{0, 4, -1} {
+		o.Side = side
+		if _, ok := o.Position(); ok {
+			t.Fatalf("side %d was accepted", side)
+		}
+	}
+}
+
 func TestRedemptionPayoutMatchesTheVenue(t *testing.T) {
 	op := rows[vl.Opened](t, "levr_opened.json", ft+"PositionOpeneds")
 	red := rows[vl.Redeemed](t, "levr_redeemed.json", ft+"PositionRedeemeds")
@@ -372,6 +382,26 @@ func TestBrokenTableIsSkippedAndCounted(t *testing.T) {
 	}
 	if err := src.Poll(t.Context()); err == nil {
 		t.Fatal("every table failed and the poll reported success")
+	}
+}
+
+func TestClosesWaitWhilePositionsCannotBeRead(t *testing.T) {
+	q := fixtureSquid(t)
+	q.broken[ft+"PositionOpeneds"] = true
+	st := newStore()
+	src, m := source(t, q, st)
+	if err := src.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if n := testutil.ToFloat64(m.Orphans()); n != 0 || len(st.pos) != 0 {
+		t.Fatalf("orphans %v, positions %d", n, len(st.pos))
+	}
+	q.broken[ft+"PositionOpeneds"] = false
+	if err := src.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if st.pos[winID].Status != levr.Won || st.pos[liqID].Status != levr.Liquidated || st.pos[voidID].Status != levr.Void {
+		t.Fatalf("%+v", st.pos)
 	}
 }
 

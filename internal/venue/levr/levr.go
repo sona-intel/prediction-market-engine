@@ -28,12 +28,17 @@ const (
 )
 
 // Contract families share one row shape, and the over/under tables are empty today
-var families = []struct{ prefix, kind string }{
+type family struct{ prefix, kind string }
+
+var families = []family{
 	{"levrFullTimeMarketSchema", "FullTimeWinner"},
 	{"levrOverUnderMarketSchema", "OverUnder"},
 }
 
 const liquidations = "levrLiquidationEngineSchemaPositionLiquidateds"
+
+// ErrOpenedDown stops a closing table from moving past rows whose positions a failed opened table has not stored yet
+var ErrOpenedDown = errors.New("positions table failed this poll")
 
 type Opened struct {
 	ID           string `json:"id"`
@@ -208,7 +213,7 @@ func (o Opened) Position() (levr.Position, bool) {
 	liq, okLiq := ppm(o.LiqPrice)
 	w, okW := wallet(o.Receiver)
 	at, okAt := when(o.Timestamp)
-	if o.PositionID == "" || o.GameMarketID == "" || !okStake || !okSize || !okFee || !okEntry || !okLiq || !okW || !okAt || stake == 0 || size < stake {
+	if o.PositionID == "" || o.GameMarketID == "" || !okStake || !okSize || !okFee || !okEntry || !okLiq || !okW || !okAt || stake == 0 || size < stake || o.Side < 1 || o.Side > 3 {
 		return levr.Position{}, false
 	}
 	return levr.Position{
@@ -254,6 +259,9 @@ type Source struct {
 	// Lookback is how far back a first poll reads without a backfill, and zero means a day
 	Lookback time.Duration
 	Now      func() time.Time
+
+	// down holds the opened tables that failed in the current poll
+	down map[string]bool
 }
 
 func (s *Source) Name() string { return venue.Levr + "/positions" }
@@ -275,12 +283,12 @@ func (s *Source) steps() []step {
 	}})
 	for _, f := range families {
 		out = append(out, step{f.prefix + "PositionRedeemeds", func(ctx context.Context) error {
-			return drain(ctx, s, f.prefix+"PositionRedeemeds", RedeemedFields, func(rows []Redeemed) error { return s.redeemed(ctx, rows) })
+			return drain(ctx, s, f.prefix+"PositionRedeemeds", RedeemedFields, func(rows []Redeemed) error { return s.redeemed(ctx, rows, f.prefix) })
 		}})
 	}
 	for _, f := range families {
 		out = append(out, step{f.prefix + "MarketSettleds", func(ctx context.Context) error {
-			return drain(ctx, s, f.prefix+"MarketSettleds", SettledFields, func(rows []Settled) error { return s.settled(ctx, rows, f.kind) })
+			return drain(ctx, s, f.prefix+"MarketSettleds", SettledFields, func(rows []Settled) error { return s.settled(ctx, rows, f) })
 		}})
 	}
 	return out
@@ -290,10 +298,14 @@ func (s *Source) steps() []step {
 func (s *Source) Poll(ctx context.Context) error {
 	var errs []error
 	steps := s.steps()
+	s.down = map[string]bool{}
 	for _, st := range steps {
 		if err := st.run(ctx); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if strings.HasSuffix(st.table, "PositionOpeneds") {
+				s.down[st.table] = true
 			}
 			s.Metrics.TableErrors(st.table).Inc()
 			slog.Warn("levr table failed", "table", st.table, "error", err)
@@ -393,6 +405,9 @@ func (s *Source) liquidated(ctx context.Context, rows []Liquidated) error {
 	var cs []levr.Close
 	for _, it := range items {
 		if _, ok := known[it.id]; !ok {
+			if len(s.down) > 0 {
+				return ErrOpenedDown
+			}
 			s.Metrics.orphans.Inc()
 			continue
 		}
@@ -401,7 +416,7 @@ func (s *Source) liquidated(ctx context.Context, rows []Liquidated) error {
 	return s.close(ctx, cs)
 }
 
-func (s *Source) redeemed(ctx context.Context, rows []Redeemed) error {
+func (s *Source) redeemed(ctx context.Context, rows []Redeemed, prefix string) error {
 	var reds []levr.Redemption
 	var ids []string
 	for _, r := range rows {
@@ -421,6 +436,9 @@ func (s *Source) redeemed(ctx context.Context, rows []Redeemed) error {
 	for _, red := range reds {
 		p, ok := known[red.PositionID]
 		if !ok {
+			if s.down[prefix+"PositionOpeneds"] {
+				return ErrOpenedDown
+			}
 			s.Metrics.orphans.Inc()
 			continue
 		}
@@ -436,7 +454,10 @@ func (s *Source) close(ctx context.Context, cs []levr.Close) error {
 	return err
 }
 
-func (s *Source) settled(ctx context.Context, rows []Settled, kind string) error {
+func (s *Source) settled(ctx context.Context, rows []Settled, f family) error {
+	if s.down[f.prefix+"PositionOpeneds"] {
+		return ErrOpenedDown
+	}
 	ms := make([]venue.Market, 0, len(rows))
 	for _, r := range rows {
 		at, ok := when(r.Timestamp)
@@ -444,7 +465,7 @@ func (s *Source) settled(ctx context.Context, rows []Settled, kind string) error
 			s.Metrics.skipped.Inc()
 			continue
 		}
-		ms = append(ms, r.Market(kind))
+		ms = append(ms, r.Market(f.kind))
 		if r.Winner == 0 {
 			continue
 		}
