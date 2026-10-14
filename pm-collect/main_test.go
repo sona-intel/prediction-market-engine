@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func TestServeRunsAndExitsCleanly(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = root.Pool.Exec(context.Background(), "drop schema if exists "+schema+" cascade") })
 	env := map[string]string{
-		"PM_PG_URL":         dsn + "?search_path=" + schema,
+		"PM_PG_URL":         withSchema(dsn, schema),
 		"PM_COLLECT_ADDR":   "127.0.0.1:0",
 		"PM_COLLECT_VENUES": "kalshi,levr",
 		// nothing listens here, so the test never reaches a live venue
@@ -88,7 +89,7 @@ func TestOncePollsOneNamedJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = root.Pool.Exec(context.Background(), "drop schema if exists "+schema+" cascade") })
-	env := map[string]string{"PM_PG_URL": dsn + "?search_path=" + schema, "PM_COLLECT_VENUES": "hyperliquid,levr"}
+	env := map[string]string{"PM_PG_URL": withSchema(dsn, schema), "PM_COLLECT_VENUES": "hyperliquid,levr"}
 	get := func(k string) string { return env[k] }
 	if err := run(t.Context(), []string{"once", "hyperliquid/wallets"}, get); err != nil {
 		t.Fatalf("wallet job: %v", err)
@@ -102,4 +103,13 @@ func TestOncePollsOneNamedJob(t *testing.T) {
 	if err := run(t.Context(), []string{"once"}, get); !errors.Is(err, errUsage) {
 		t.Fatalf("got %v", err)
 	}
+}
+
+// a DSN from the environment may already carry query parameters such as sslmode
+func withSchema(dsn, schema string) string {
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + "search_path=" + schema
 }
