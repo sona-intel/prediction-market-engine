@@ -66,7 +66,10 @@ func (s *Store) UpsertMarkets(ctx context.Context, ms []venue.Market) error {
 		b.Queue(`insert into market (venue, id, title, kind, close_ts, status, result) values ($1, $2, $3, $4, $5, $6, $7)
 			on conflict (venue, id) do update set title = excluded.title, kind = excluded.kind, close_ts = excluded.close_ts,
 			status = case when market.result <> '' then market.status else excluded.status end,
-			result = case when excluded.result = '' then market.result else excluded.result end`,
+			result = case when excluded.result = '' then market.result else excluded.result end
+			where (market.title, market.kind, market.close_ts, market.status, market.result) is distinct from (excluded.title, excluded.kind, excluded.close_ts,
+				case when market.result <> '' then market.status else excluded.status end,
+				case when excluded.result = '' then market.result else excluded.result end)`,
 			m.Venue, m.ID, m.Title, m.Kind, closeTS, m.Status, m.Result)
 	}, nil)
 }

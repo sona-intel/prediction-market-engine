@@ -239,3 +239,33 @@ func TestLastTradeTS(t *testing.T) {
 		t.Fatalf("got %v, %v, %v", got, ok, err)
 	}
 }
+
+func TestUnchangedMarketUpsertWritesNoRow(t *testing.T) {
+	st := pgtest.New(t)
+	ctx := t.Context()
+	m := venue.Market{Venue: "kalshi", ID: "A", Title: "Alpha", Close: t0, Status: "open"}
+	if err := st.UpsertMarkets(ctx, []venue.Market{m}); err != nil {
+		t.Fatal(err)
+	}
+	version := func() string {
+		var x string
+		if err := st.Pool.QueryRow(ctx, `select xmin::text from market where id = 'A'`).Scan(&x); err != nil {
+			t.Fatal(err)
+		}
+		return x
+	}
+	before := version()
+	if err := st.UpsertMarkets(ctx, []venue.Market{m}); err != nil {
+		t.Fatal(err)
+	}
+	if version() != before {
+		t.Fatal("an identical upsert rewrote the row")
+	}
+	m.Title = "Alpha renamed"
+	if err := st.UpsertMarkets(ctx, []venue.Market{m}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := st.Market(ctx, "kalshi", "A"); got.Title != "Alpha renamed" || version() == before {
+		t.Fatalf("a changed upsert did not land: %+v", got)
+	}
+}
