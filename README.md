@@ -45,3 +45,17 @@ PM_TEST_PG=postgres://pm:...@127.0.0.1:5437/pm go test -race ./...
 ```
 
 Tests that need Postgres skip when `PM_TEST_PG` is unset. Settings are `PM_PG_URL`, `PM_COLLECT_VENUES` and `PM_SNAP_KEEP_DAYS`, and every backfill switch stays off by default.
+
+### Hyperliquid HIP-4
+
+One WebSocket connection follows every outcome and subscribes to side 0 only, because the two sides of an outcome carry the same fills mirrored (same hash, time and size, prices that sum to 1, wallets swapped). On the live feed 5,135 of 5,135 side-0 fills had exactly one twin on side 1. The outcome list is re-read every `PM_HL_META_EVERY` (5m), and outcomes that leave it are unsubscribed and marked closed. After a restart or reconnect, `recentTrades` is called once per coin that had a stored tape, paced to `PM_HL_GAP_WEIGHT` weight a minute (300), and a gap is counted when that page starts after the newest stored trade. The count is `pm_hip4_gaps_total` and the `hyperliquid/gaps` cursor. Rows with a price outside 0 to 1, a bad wallet or an odd size are skipped and counted in `pm_hip4_trades_skipped_total`. `PM_HL_URL` overrides the host.
+
+### Polymarket US
+
+The gateway has no trade tape, so three jobs share one request limiter (`PM_PMUS_RPS`, 0.4), since it answers 429 with Retry-After above about half a request a second across all paths.
+
+- `catalogue` sweeps every open market each `PM_PMUS_SWEEP_EVERY` (1h), about 152 pages.
+- `quotes` snapshots the top `PM_PMUS_TOP` (100) markets by volume each `PM_PMUS_EVERY` (10m). Volume and open interest are share counts, so they are stored as notional dollars.
+- `settlement` checks markets past their end date each `PM_PMUS_SETTLE_EVERY` (10m) and records the `settlement` flag, with `yes` meaning the long side won. The quote's `settlementPx` also shows on open markets, so it is not used.
+
+Fixtures for both venues are in `testdata/venues` with the recorder that wrote them.
