@@ -40,6 +40,7 @@ type Reader interface {
 type app struct {
 	s    Reader
 	feed Feed
+	v    Venues
 }
 
 type build func(ctx context.Context) (body any, through store.Coverage, err error)
@@ -59,15 +60,20 @@ func (a *app) routes() []route {
 		{"GET /internal/v1/calibration", a.calibration},
 		{"GET /internal/v1/pm/markets/top", a.topMarkets},
 		{"GET /internal/v1/pm/trades/large", a.largeTrades},
+		{"GET /internal/v1/pm/venues", a.venues},
+		{"GET /internal/v1/pm/markets/{venue}/{id}/history", a.history},
 	}
 }
 
 // New serves the history only, so the live routes answer 503
 func New(s Reader, m *Metrics) http.Handler { return NewLive(s, nil, m) }
 
-func NewLive(s Reader, feed Feed, m *Metrics) http.Handler {
+func NewLive(s Reader, feed Feed, m *Metrics) http.Handler { return NewFull(s, feed, nil, m) }
+
+// NewFull also serves the venues pm-collect records, and a nil v answers their routes with 503
+func NewFull(s Reader, feed Feed, v Venues, m *Metrics) http.Handler {
 	mux := http.NewServeMux()
-	for _, rt := range (&app{s: s, feed: feed}).routes() {
+	for _, rt := range (&app{s: s, feed: feed, v: v}).routes() {
 		mux.HandleFunc(rt.pattern, rt.handler)
 	}
 	mux.HandleFunc("/", notFound)
@@ -97,6 +103,15 @@ func (a *app) status(w http.ResponseWriter, req *http.Request) {
 }
 
 func (a *app) trader(w http.ResponseWriter, req *http.Request) {
+	code, err := venueParam(req.URL.Query())
+	if err != nil {
+		writeProblem(w, problemFor(err, req.URL.EscapedPath()))
+		return
+	}
+	if code != venuePolymarket {
+		a.venueTrader(w, req, code)
+		return
+	}
 	respond(w, req, func(ctx context.Context) (any, store.Coverage, error) {
 		addr, ok := parseWallet(req.PathValue("wallet"))
 		if !ok {
@@ -111,6 +126,15 @@ func (a *app) trader(w http.ResponseWriter, req *http.Request) {
 }
 
 func (a *app) leaderboard(w http.ResponseWriter, req *http.Request) {
+	code, err := venueParam(req.URL.Query())
+	if err != nil {
+		writeProblem(w, problemFor(err, req.URL.EscapedPath()))
+		return
+	}
+	if code != venuePolymarket {
+		a.venueBoard(w, req, code)
+		return
+	}
 	respond(w, req, func(ctx context.Context) (any, store.Coverage, error) {
 		board := req.PathValue("board")
 		if !slices.Contains(store.Boards, board) {
@@ -163,6 +187,20 @@ func (a *app) calibration(w http.ResponseWriter, req *http.Request) {
 /* Responses */
 
 func respond(w http.ResponseWriter, req *http.Request, read build) {
+	var through store.Coverage
+	answer(w, req, func(ctx context.Context) (any, error) {
+		body, t, err := read(ctx)
+		through = t
+		return body, err
+	}, func(h http.Header) {
+		h.Set("Sona-Finality", "finalized")
+		h.Set("Sona-Block", strconv.FormatInt(through.Block, 10))
+		h.Set("Sona-Block-Time", strconv.FormatInt(through.Time, 10))
+	})
+}
+
+// answer runs read under the request's time budget and writes its body or the problem it maps to, and stamp adds headers to a success
+func answer(w http.ResponseWriter, req *http.Request, read func(ctx context.Context) (any, error), stamp func(http.Header)) {
 	budget, ok := deadline(req.Header)
 	if !ok {
 		budget = defaultDeadline
@@ -173,7 +211,7 @@ func respond(w http.ResponseWriter, req *http.Request, read build) {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), budget)
 	defer cancel()
-	body, through, err := read(ctx)
+	body, err := read(ctx)
 	var data []byte
 	if err == nil {
 		data, err = json.Marshal(body)
@@ -194,9 +232,9 @@ func respond(w http.ResponseWriter, req *http.Request, read build) {
 		return
 	}
 	h := w.Header()
-	h.Set("Sona-Finality", "finalized")
-	h.Set("Sona-Block", strconv.FormatInt(through.Block, 10))
-	h.Set("Sona-Block-Time", strconv.FormatInt(through.Time, 10))
+	if stamp != nil {
+		stamp(h)
+	}
 	h.Set("Content-Type", "application/json")
 	h.Set("Content-Length", strconv.Itoa(len(data)))
 	_, _ = w.Write(data)

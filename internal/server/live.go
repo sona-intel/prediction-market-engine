@@ -72,6 +72,15 @@ type largeTrade struct {
 }
 
 func (a *app) topMarkets(w http.ResponseWriter, req *http.Request) {
+	code, err := venueParam(req.URL.Query())
+	if err != nil {
+		writeProblem(w, problemFor(err, req.URL.EscapedPath()))
+		return
+	}
+	if code != venuePolymarket {
+		a.venueTop(w, req, code)
+		return
+	}
 	respondLive(w, req, func() (any, bool, error) {
 		limit, err := intParam(req.URL.Query(), "limit", topDefault, 1, topMax)
 		if err != nil {
@@ -103,6 +112,15 @@ func (a *app) topMarkets(w http.ResponseWriter, req *http.Request) {
 }
 
 func (a *app) largeTrades(w http.ResponseWriter, req *http.Request) {
+	code, err := venueParam(req.URL.Query())
+	if err != nil {
+		writeProblem(w, problemFor(err, req.URL.EscapedPath()))
+		return
+	}
+	if code != venuePolymarket {
+		a.venueLarge(w, req, code)
+		return
+	}
 	respondLive(w, req, func() (any, bool, error) {
 		q := req.URL.Query()
 		limit, err := intParam(q, "limit", largeDefault, 1, largeMax)

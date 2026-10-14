@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"pm/internal/pgstore"
 	"pm/internal/store"
 )
 
@@ -86,7 +87,9 @@ func problemFor(err error, instance string) problem {
 		return newProblem(codeUnavailable, "The first Polymarket poll has not finished.", instance)
 	case errors.Is(err, store.ErrNotBuilt):
 		return newProblem(codeUnavailable, "The database is not ready.", instance)
-	case errors.Is(err, store.ErrNotFound):
+	case errors.Is(err, errVenueDown):
+		return newProblem(codeUnavailable, "The venue database is not available.", instance)
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, pgstore.ErrNotFound):
 		return newProblem(codeNotFound, "Nothing was found for this identifier.", instance)
 	case errors.Is(err, context.DeadlineExceeded):
 		return newProblem(codeDeadline, "The deadline passed before the data was read.", instance)

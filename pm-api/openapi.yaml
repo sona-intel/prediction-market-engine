@@ -62,6 +62,15 @@ info:
     - A **time** is RFC 3339 in UTC, to whole seconds, ending in `Z`.
     - A **trade id** is `137_<block>_<logIndex>`: the Polygon chain id, the block number and the position of the log in the block, so the trade can be found on chain.
 
+    ## Other venues
+
+    Four more venues are recorded into Postgres by the collector `pm-collect` and read from there, never from a source API: Hyperliquid HIP-4 outcomes (`hyperliquid`), Kalshi (`kalshi`), Polymarket US (`polymarket-us`) and Levr Bet on Monad (`levr`). Recording started when the collector first ran, so there is no earlier history, and each venue's `coverage` object says what is and is not recorded. The routes for the busiest markets, the largest trades, one trader and the leaderboards take a `venue` query parameter whose default is `polymarket`, so a call without it answers exactly as before. `GET /internal/v1/pm/venues` lists the venues, and `GET /internal/v1/pm/markets/{venue}/{id}/history` serves the recorded snapshots of one market.
+
+    - **What each venue has.** `hyperliquid` has the full fill tape with both wallets, so it has traders and leaderboards, and no market snapshots (its history route is the last trade price per 5 minutes). `kalshi` has market snapshots and only the prints that cost the taker at least $10,000, with no wallets. `polymarket-us` has market snapshots only. `levr` has leveraged positions per wallet, and no market list.
+    - **Amounts.** Dollar amounts on the market, trade and history routes are plain JSON numbers, as on the live Polymarket routes. A field that a venue does not report is `null` and never 0. The trader and leaderboard routes keep the exact `raw` and `value` amounts. Prices are `yes_price` from 0 to 1, the price of the Yes side.
+    - **No `Sona-*` stamp.** An answer for another venue has no `Sona-Finality`, `Sona-Block` or `Sona-Block-Time` header, because it describes a moving present and not one block. A venue answer has its own `coverage` object (see `VenueCoverage`) and not the Polymarket one.
+    - **Errors.** An unknown `venue`, or a venue that a route cannot serve, answers 400 `invalid_query`. That includes a trader or leaderboard call for `kalshi` or `polymarket-us`, which publish no trader ids. When Postgres cannot be reached a venue route answers 503 `upstream_unavailable` with `Retry-After: 1`, while the Polymarket history and live routes keep answering.
+
     ## How this differs from the public API
 
     - The body is the bare record, with a `kind` and no `data`, `meta` and `links` envelope.
@@ -88,6 +97,9 @@ tags:
   - name: Live
     description: |
       Polymarket's busiest markets and largest recent trades right now, kept in memory and refreshed once a minute.
+  - name: Venues
+    description: |
+      The venues recorded beyond Polymarket, and the market snapshots, large trades, traders and leaderboards of each.
   - name: Operations
     description: |
       Probes for the container health check and for operators. They have no body.
@@ -161,8 +173,11 @@ paths:
 
         `evidence` shows what lies behind a flag, and it is empty for a wallet that is not flagged. `counterparties` are the top 5 wallets by flagged shares and `trades` the top 20 flagged trades by shares (ties go to the earlier trade). The lists are cut to that length, but the totals above them are exact, and so are the figures inside the lists. A trade is seen from this wallet's side: `side` is what this wallet did, `outcome` is the market outcome 0 or 1 that changed hands, and `price` is `usdc` per share.
 
+        **Other venues.** With `venue=hyperliquid` the record is a `pm_trader` with a `venue` field and the figures of the HIP-4 tape: activity, profit and loss and skill, and no wash check, owner or calibration. With `venue=levr` the record is a `pm_levr_trader` with the leveraged positions of the wallet. `kalshi` and `polymarket-us` publish no trader ids and answer 400 `invalid_query`. A wallet the venue has not recorded answers 404 `not_found`.
+
         Errors: 400 `invalid_id` for a wallet that is not `0x` and 40 hex digits. 404 `not_found` for a wallet with no fills, which includes one that only split, merged or redeemed. 503 `upstream_unavailable` when no valid database exists yet, and 504 `deadline_exceeded` when the budget runs out.
       parameters:
+        - $ref: '#/components/parameters/Venue'
         - $ref: '#/components/parameters/Wallet'
         - $ref: '#/components/parameters/DeadlineMs'
       responses:
@@ -171,7 +186,7 @@ paths:
           headers: *stampHeaders
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/PmTrader'}
+              schema: {oneOf: [{$ref: '#/components/schemas/PmTrader'}, {$ref: '#/components/schemas/PmHyperliquidTrader'}, {$ref: '#/components/schemas/PmLevrTrader'}]}
               examples:
                 golden:
                   summary: A wallet with 11 resolved markets, so it has no win rate and no skill rating yet
@@ -185,6 +200,12 @@ paths:
                 flagged:
                   summary: A wallet whose trades were flagged as wash trades, with the counterparty and the trades behind the flag
                   value: {"kind": "pm_trader", "wallet": "0x0ef286b836e4efa2aa3403cfba1baa6c54d8e986", "owner": null, "owner_kind": null, "activity": {"fills": 4, "markets": 1, "volume": {"raw": "25816122000", "decimals": 6, "symbol": "USDC", "value": "25816.122"}, "buy_volume": {"raw": "12865226000", "decimals": 6, "symbol": "USDC", "value": "12865.226"}, "taker_fills": 1, "taker_volume": {"raw": "10534000", "decimals": 6, "symbol": "USDC", "value": "10.534"}, "first_trade": "2025-05-16T07:28:14Z", "last_trade": "2025-05-16T08:30:06Z"}, "pnl": {"realized": {"raw": "85670000", "decimals": 6, "symbol": "USDC", "value": "85.67"}, "gross": {"raw": "85670000", "decimals": 6, "symbol": "USDC", "value": "85.67"}, "fees": {"raw": "0", "decimals": 6, "symbol": "USDC", "value": "0"}, "biggest_win": {"raw": "85670000", "decimals": 6, "symbol": "USDC", "value": "85.67"}, "resolved_markets": 1, "won_markets": 1, "win_rate": {"value": null, "wilson_lower": null, "shown": false, "floor": 30}, "open_unresolved_positions": 0, "final": true, "amm_trades_excluded": 0}, "skill": {"rated": false, "floor": {"markets": 30, "events": 3}, "horizon_hours": 12, "markets": 1, "events": 1, "brier": null, "edge": null, "edge_se": null, "calibration": []}, "wash": {"scored": true, "score": 0.9998909823239589, "paired_volume": {"raw": "57052000000", "decimals": 6, "symbol": "shares", "value": "57052"}, "flagged_volume": {"raw": "57029000000", "decimals": 6, "symbol": "shares", "value": "57029"}, "flagged_share": 0.9995968590058193, "algorithm": "columbia-2", "evidence": {"counterparties": [{"wallet": "0x0f7d807ecfa6aca2acf9ebcfea543efc83e51033", "score": 0.9999003887327607, "markets": 1, "trades": 3, "shares": {"raw": "57029000000", "decimals": 6, "symbol": "shares", "value": "57029"}}], "trades": [{"id": "137_71578356_678", "time": "2025-05-16T07:28:14Z", "market": {"condition": "0xc0d117acf059a4870b116b50732020883e24dfc3577249ff37a74c6ce77d1f4d", "question": "Will Manchester United win the UEFA Europa League?"}, "counterparty": "0x0f7d807ecfa6aca2acf9ebcfea543efc83e51033", "side": "buy", "outcome": 1, "shares": {"raw": "28519000000", "decimals": 6, "symbol": "shares", "value": "28519"}, "usdc": {"raw": "12862069000", "decimals": 6, "symbol": "USDC", "value": "12862.069"}, "price": 0.451}, {"id": "137_71580103_514", "time": "2025-05-16T08:30:06Z", "market": {"condition": "0xc0d117acf059a4870b116b50732020883e24dfc3577249ff37a74c6ce77d1f4d", "question": "Will Manchester United win the UEFA Europa League?"}, "counterparty": "0x0f7d807ecfa6aca2acf9ebcfea543efc83e51033", "side": "sell", "outcome": 1, "shares": {"raw": "28503000000", "decimals": 6, "symbol": "shares", "value": "28503"}, "usdc": {"raw": "12940362000", "decimals": 6, "symbol": "USDC", "value": "12940.362"}, "price": 0.454}, {"id": "137_71578356_664", "time": "2025-05-16T07:28:14Z", "market": {"condition": "0xc0d117acf059a4870b116b50732020883e24dfc3577249ff37a74c6ce77d1f4d", "question": "Will Manchester United win the UEFA Europa League?"}, "counterparty": "0x0f7d807ecfa6aca2acf9ebcfea543efc83e51033", "side": "buy", "outcome": 1, "shares": {"raw": "7000000", "decimals": 6, "symbol": "shares", "value": "7"}, "usdc": {"raw": "3157000", "decimals": 6, "symbol": "USDC", "value": "3.157"}, "price": 0.451}]}}, "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+                hyperliquid:
+                  summary: A HIP-4 wallet with the most volume on the board, from the recorded tape
+                  value: {"kind": "pm_trader", "venue": "hyperliquid", "wallet": "0x25773676902085225ae5751075e4161369334897", "activity": {"fills": 549, "markets": 74, "volume": {"raw": "54959274040", "decimals": 6, "symbol": "USDC", "value": "54959.27404"}}, "pnl": {"realized": {"raw": "1525974902", "decimals": 6, "symbol": "USDC", "value": "1525.974902"}, "gross": {"raw": "1525974902", "decimals": 6, "symbol": "USDC", "value": "1525.974902"}, "fees": {"raw": "0", "decimals": 6, "symbol": "USDC", "value": "0"}, "resolved_markets": 3, "won_markets": 2, "win_rate": {"value": null, "wilson_lower": null, "shown": false, "floor": 30}}, "skill": {"rated": false, "floor": {"markets": 30, "events": 3}, "brier": null, "edge": null, "edge_se": null}, "coverage": {"venue": "hyperliquid", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:53Z", "mode": "recorded", "wallets": true, "gaps": 11, "note": "Every Hyperliquid HIP-4 outcome fill since recording started, read from the public WebSocket, with both wallets. A gap is a reconnect whose catch-up page did not reach the stored tape. Results appear once a settlement fill is found, so some settled outcomes may still show no result."}}
+                levr:
+                  summary: A Levr Bet wallet with one won leveraged position
+                  value: {"kind": "pm_levr_trader", "venue": "levr", "wallet": "0xafdd9649fff41c1e78d2a0931da1c3581cdd8911", "positions": 1, "open": 0, "won": 1, "lost": 0, "liquidated": 0, "voided": 0, "stake": {"raw": "5000000", "decimals": 6, "symbol": "USDC", "value": "5"}, "size": {"raw": "15000000", "decimals": 6, "symbol": "USDC", "value": "15"}, "leverage": 3, "liquidation_rate": 0, "win_rate": 1, "realized": {"raw": "4448765", "decimals": 6, "symbol": "USDC", "value": "4.448765"}, "first_position": "2026-10-14T14:29:15Z", "last_position": "2026-10-14T14:29:15Z", "coverage": {"venue": "levr", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:26Z", "mode": "recorded", "wallets": true, "gaps": null, "note": "Leveraged positions, liquidations and settlements of Levr Bet on Monad, read from the venue's unofficial indexer. Payouts are worked out from redemption rows, and void refunds and the partial return of a liquidation are not published. Positions opened before recording started are missing."}}
         "400":
           $ref: '#/components/responses/BadRequest'
           description: The `wallet` is not `0x` followed by 40 hex digits (`invalid_id`).
@@ -212,8 +233,11 @@ paths:
 
         A row has the wallet, its `fills`, `markets`, `volume` and net `realized` profit (the same figures as in the trader record), `final`, the `wash_share` (the flagged part of the shares it traded against other wallets, 0 when it has none) and `skill`. `skill` is `null` for a wallet that is not rated and otherwise holds `markets`, `events`, `brier`, `edge` and `edge_lb`. Read the rules behind these figures in the trader route. Pull the full record of a row with the trader route.
 
+        **Other venues.** With `venue=hyperliquid` the boards are `pnl`, `volume` and `skill` over the HIP-4 wallets, where `skill` ranks the rated wallets by `edge_lb`. With `venue=levr` the boards are `pnl` (realized profit) and `volume` (the size of the positions a wallet opened), and `skill` answers 400 `invalid_id`. The rows of those venues are different from the Polymarket rows, see `HyperliquidBoardRow` and `LevrBoardRow`, and a body carries `venue`. `kalshi` and `polymarket-us` have no trader ids and answer 400 `invalid_query`.
+
         Errors: 400 `invalid_id` for a `board` that is not `pnl`, `volume` or `skill`. 400 `invalid_query` for a `limit` or `offset` that is not a whole number in its range. 503 `upstream_unavailable` when no valid database exists yet, and 504 `deadline_exceeded` when the budget runs out.
       parameters:
+        - $ref: '#/components/parameters/Venue'
         - $ref: '#/components/parameters/Board'
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
@@ -224,7 +248,7 @@ paths:
           headers: *stampHeaders
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/PmLeaderboard'}
+              schema: {oneOf: [{$ref: '#/components/schemas/PmLeaderboard'}, {$ref: '#/components/schemas/PmHyperliquidBoard'}, {$ref: '#/components/schemas/PmLevrBoard'}]}
               examples:
                 pnl:
                   summary: The three wallets with the highest net profit (limit=3)
@@ -235,6 +259,18 @@ paths:
                 skill:
                   summary: The rated wallets of the fixture database, ranked by the lower bound of their edge
                   value: {"kind": "pm_leaderboard", "board": "skill", "limit": 50, "offset": 0, "total": 3, "rows": [{"rank": 1, "wallet": "0x782085795ff8df34b5df0d7e782f982607f5485b", "fills": 1565, "markets": 493, "volume": {"raw": "638186535331", "decimals": 6, "symbol": "USDC", "value": "638186.535331"}, "realized": {"raw": "5986336130", "decimals": 6, "symbol": "USDC", "value": "5986.33613"}, "final": true, "wash_share": 0, "skill": {"markets": 236, "events": 236, "brier": 0.006179737534309323, "edge": 0.012191724576271186, "edge_lb": 0.002262384557944235}}, {"rank": 2, "wallet": "0x6326fc8a7361717b3926287f2998c91ee4faade2", "fills": 353, "markets": 56, "volume": {"raw": "66058482953", "decimals": 6, "symbol": "USDC", "value": "66058.482953"}, "realized": {"raw": "5038163967", "decimals": 6, "symbol": "USDC", "value": "5038.163967"}, "final": true, "wash_share": 0, "skill": {"markets": 49, "events": 48, "brier": 0.12088593877551021, "edge": 0.027938775510204083, "edge_lb": -0.07010423851935337}}, {"rank": 3, "wallet": "0xc7c0884434447abb587ee7ff2e6af0cdc00cd714", "fills": 245, "markets": 139, "volume": {"raw": "2446040515", "decimals": 6, "symbol": "USDC", "value": "2446.040515"}, "realized": {"raw": "-388449552", "decimals": 6, "symbol": "USDC", "value": "-388.449552"}, "final": false, "wash_share": 0, "skill": {"markets": 43, "events": 43, "brier": 0.20342500509553488, "edge": 0.054365441860465116, "edge_lb": -0.08104603526276842}}], "coverage": {"note": "Polymarket history through 2026-04-24 07:43:40 UTC (Polygon block 85,948,288). Order-book trades start on 2022-11-21. Later trades are not included. Trades on the old automated market maker are not part of profit and loss.", "through": {"block": 85948288, "time": "2026-04-24T07:43:40Z"}, "revision": "7eeb860dea5b79d5c74f3182b70bd08c85c8f833", "attribution": "Polymarket history: Envio, CC-BY-4.0", "license_url": "https://creativecommons.org/licenses/by/4.0/", "modified": "Modified by Sona: source rows were aggregated into per-wallet and per-market figures. Not affiliated with or endorsed by Polymarket or Envio.", "source_url": "https://huggingface.co/datasets/moose-code/polymarket-onchain-v1"}}
+                hyperliquid_pnl:
+                  summary: The three HIP-4 wallets with the highest realized profit (venue=hyperliquid, limit=3)
+                  value: {"kind": "pm_leaderboard", "venue": "hyperliquid", "board": "pnl", "limit": 3, "offset": 0, "total": 548, "rows": [{"rank": 1, "wallet": "0x25773676902085225ae5751075e4161369334897", "fills": 549, "markets": 74, "volume": {"raw": "54959274040", "decimals": 6, "symbol": "USDC", "value": "54959.27404"}, "realized": {"raw": "1525974902", "decimals": 6, "symbol": "USDC", "value": "1525.974902"}, "skill": null}, {"rank": 2, "wallet": "0x2316584c0b64d807a95cb675557c940e7629b482", "fills": 52, "markets": 9, "volume": {"raw": "3818081460", "decimals": 6, "symbol": "USDC", "value": "3818.08146"}, "realized": {"raw": "256206566", "decimals": 6, "symbol": "USDC", "value": "256.206566"}, "skill": null}, {"rank": 3, "wallet": "0xc3645783600f501c1ace52a33c736dac5ea898ec", "fills": 193, "markets": 45, "volume": {"raw": "7366640690", "decimals": 6, "symbol": "USDC", "value": "7366.64069"}, "realized": {"raw": "202518391", "decimals": 6, "symbol": "USDC", "value": "202.518391"}, "skill": null}], "coverage": {"venue": "hyperliquid", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:30Z", "mode": "recorded", "wallets": true, "gaps": 11, "note": "Every Hyperliquid HIP-4 outcome fill since recording started, read from the public WebSocket, with both wallets. A gap is a reconnect whose catch-up page did not reach the stored tape. Results appear once a settlement fill is found, so some settled outcomes may still show no result."}}
+                hyperliquid_skill:
+                  summary: The HIP-4 skill board, empty until a wallet has rated outcomes (venue=hyperliquid)
+                  value: {"kind": "pm_leaderboard", "venue": "hyperliquid", "board": "skill", "limit": 3, "offset": 0, "total": 0, "rows": [], "coverage": {"venue": "hyperliquid", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:30Z", "mode": "recorded", "wallets": true, "gaps": 11, "note": "Every Hyperliquid HIP-4 outcome fill since recording started, read from the public WebSocket, with both wallets. A gap is a reconnect whose catch-up page did not reach the stored tape. Results appear once a settlement fill is found, so some settled outcomes may still show no result."}}
+                levr_pnl:
+                  summary: The three Levr wallets with the highest realized profit (venue=levr, limit=3)
+                  value: {"kind": "pm_leaderboard", "venue": "levr", "board": "pnl", "limit": 3, "offset": 0, "total": 48, "rows": [{"rank": 1, "wallet": "0xafdd9649fff41c1e78d2a0931da1c3581cdd8911", "positions": 1, "stake": {"raw": "5000000", "decimals": 6, "symbol": "USDC", "value": "5"}, "size": {"raw": "15000000", "decimals": 6, "symbol": "USDC", "value": "15"}, "leverage": 3, "liquidations": 0, "liquidation_rate": 0, "win_rate": 1, "realized": {"raw": "4448765", "decimals": 6, "symbol": "USDC", "value": "4.448765"}}, {"rank": 2, "wallet": "0xf11a2d93161ffaa8771fe89c036d42816b5e895f", "positions": 1, "stake": {"raw": "5000000", "decimals": 6, "symbol": "USDC", "value": "5"}, "size": {"raw": "15000000", "decimals": 6, "symbol": "USDC", "value": "15"}, "leverage": 3, "liquidations": 0, "liquidation_rate": 0, "win_rate": 1, "realized": {"raw": "4423265", "decimals": 6, "symbol": "USDC", "value": "4.423265"}}, {"rank": 3, "wallet": "0x3c4a38380fc9d0a1ac84e678cba72223c27b5b38", "positions": 1, "stake": {"raw": "5000000", "decimals": 6, "symbol": "USDC", "value": "5"}, "size": {"raw": "15000000", "decimals": 6, "symbol": "USDC", "value": "15"}, "leverage": 3, "liquidations": 0, "liquidation_rate": 0, "win_rate": 1, "realized": {"raw": "4396265", "decimals": 6, "symbol": "USDC", "value": "4.396265"}}], "coverage": {"venue": "levr", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:26Z", "mode": "recorded", "wallets": true, "gaps": null, "note": "Leveraged positions, liquidations and settlements of Levr Bet on Monad, read from the venue's unofficial indexer. Payouts are worked out from redemption rows, and void refunds and the partial return of a liquidation are not published. Positions opened before recording started are missing."}}
+                levr_volume:
+                  summary: The three Levr wallets that opened the largest positions (venue=levr, limit=3)
+                  value: {"kind": "pm_leaderboard", "venue": "levr", "board": "volume", "limit": 3, "offset": 0, "total": 48, "rows": [{"rank": 1, "wallet": "0xc50f55c6892c65d27322a2909bbc5a62f12080c5", "positions": 8, "stake": {"raw": "6100001301", "decimals": 6, "symbol": "USDC", "value": "6100.001301"}, "size": {"raw": "12200000000", "decimals": 6, "symbol": "USDC", "value": "12200"}, "leverage": 2, "liquidations": 0, "liquidation_rate": 0, "win_rate": 0, "realized": {"raw": "0", "decimals": 6, "symbol": "USDC", "value": "0"}}, {"rank": 2, "wallet": "0x7a91b7c5f42da6f7a28c9ff383f3d7fd41145c57", "positions": 3, "stake": {"raw": "300000013", "decimals": 6, "symbol": "USDC", "value": "300.000013"}, "size": {"raw": "900000000", "decimals": 6, "symbol": "USDC", "value": "900"}, "leverage": 3, "liquidations": 0, "liquidation_rate": 0, "win_rate": 0, "realized": {"raw": "0", "decimals": 6, "symbol": "USDC", "value": "0"}}, {"rank": 3, "wallet": "0x9b8759115e594c766845663aeeb807bb04c3557d", "positions": 3, "stake": {"raw": "15000000", "decimals": 6, "symbol": "USDC", "value": "15"}, "size": {"raw": "75000000", "decimals": 6, "symbol": "USDC", "value": "75"}, "leverage": 5, "liquidations": 2, "liquidation_rate": 1, "win_rate": 0, "realized": {"raw": "-10000000", "decimals": 6, "symbol": "USDC", "value": "-10"}}], "coverage": {"venue": "levr", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:26Z", "mode": "recorded", "wallets": true, "gaps": null, "note": "Leveraged positions, liquidations and settlements of Levr Bet on Monad, read from the venue's unofficial indexer. Payouts are worked out from redemption rows, and void refunds and the partial return of a liquidation are not published. Positions opened before recording started are missing."}}
         "400":
           $ref: '#/components/responses/BadRequest'
           description: The `board` is not `pnl`, `volume` or `skill` (`invalid_id`), or `limit` or `offset` is not a whole number in its range (`invalid_query`).
@@ -295,8 +331,11 @@ paths:
 
         `fetched_at` is when the copy was taken, to whole seconds in UTC. `stale` is `true` when the last poll failed and this is the last good copy, and the response then also has `X-Sona-Cache: stale`. `source` is always `polymarket-gamma`. The answer has no `coverage` object and no `Sona-*` stamp headers.
 
-        Errors: 400 `invalid_query` for a `limit` that is not a whole number from 1 to 50. 503 `upstream_unavailable` before the first poll has worked, with `Retry-After` 10. 504 `deadline_exceeded` only when `Sona-Deadline-Ms` is 0 or less.
+        **Other venues.** With `venue=kalshi`, `polymarket-us` or `hyperliquid` the answer is the most active markets of that venue from the recorded data, ranked by 24-hour volume (by total volume for `polymarket-us`, which reports no 24-hour figure), and its items and fields are those of `VenueMarket`. Only markets with a snapshot in the newest sweeps count for the first two, and Hyperliquid ranks the dollars traded in the last 24 hours with the last trade as the quote. `levr` has no market list and answers 400 `invalid_query`.
+
+        Errors: 400 `invalid_query` for a `limit` that is not a whole number from 1 to 50, or a `venue` that is not served. 503 `upstream_unavailable` before the first poll has worked, with `Retry-After` 10, and for another venue when Postgres is down, with `Retry-After` 1. 504 `deadline_exceeded` only when `Sona-Deadline-Ms` is 0 or less.
       parameters:
+        - $ref: '#/components/parameters/Venue'
         - name: limit
           in: query
           required: false
@@ -315,17 +354,26 @@ paths:
             X-Request-Id: {$ref: '#/components/headers/RequestId'}
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/PmTopMarkets'}
+              schema: {oneOf: [{$ref: '#/components/schemas/PmTopMarkets'}, {$ref: '#/components/schemas/PmVenueTopMarkets'}]}
               examples:
                 two:
                   summary: The two busiest events (limit=2)
                   value: {"kind": "pm_top_markets", "items": [{"event_id": "1109542", "slug": "ucl-atm-mnu-2026-10-13", "title": "Club Atletico de Madrid vs. Manchester United FC", "volume_24h_usd": 4115173.31, "volume_total_usd": 4199141.12, "liquidity_usd": 7916220.44, "end_date": "2026-10-13T19:00:00Z", "markets": [{"question": "Will Club Atletico de Madrid win on 2026-10-13?", "outcome_prices": [0.535, 0.465]}]}, {"event_id": "1109600", "slug": "open-ended", "title": "An event without an end date", "volume_24h_usd": 900.5, "volume_total_usd": null, "liquidity_usd": 10, "end_date": null, "markets": []}], "fetched_at": "2026-10-13T18:30:00Z", "stale": false, "source": "polymarket-gamma"}
+                kalshi:
+                  summary: The two Kalshi markets with the most 24-hour volume (venue=kalshi, limit=2)
+                  value: {"kind": "pm_top_markets", "venue": "kalshi", "items": [{"market_id": "KXMLBGAME-26OCT142000MILLAD-LAD", "title": "Los Angeles D wins", "market_kind": "KXMLBGAME", "status": "open", "result": null, "close_time": "2026-10-18T00:00:00Z", "yes_price": 0.62, "volume_usd": 2075833.39, "open_interest_usd": 1965466.55, "volume_24h_usd": 1888224.08, "as_of": "2026-10-14T22:31:04Z"}, {"market_id": "KXMLBGAME-26OCT142000MILLAD-MIL", "title": "Milwaukee wins", "market_kind": "KXMLBGAME", "status": "open", "result": null, "close_time": "2026-10-18T00:00:00Z", "yes_price": 0.39, "volume_usd": 1703802.99, "open_interest_usd": 1585638.4, "volume_24h_usd": 1479360.36, "as_of": "2026-10-14T22:31:04Z"}], "as_of": "2026-10-14T22:31:04Z", "source": "kalshi-api", "coverage": {"venue": "kalshi", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:26Z", "mode": "partial_tape", "wallets": false, "gaps": null, "note": "Market snapshots of the 500 markets with the most 24-hour volume, and only the prints that cost the taker at least $10,000. Kalshi publishes no trader ids. History starts when recording started."}}
+                polymarket_us:
+                  summary: The two Polymarket US markets with the most volume (venue=polymarket-us, limit=2)
+                  value: {"kind": "pm_top_markets", "venue": "polymarket-us", "items": [{"market_id": "paccc-usho-midterms-2026-11-03-rep", "title": "U.S House Midterm Winner: Republican Party", "market_kind": "election", "status": "open", "result": null, "close_time": "2027-02-02T04:59:00Z", "yes_price": 0.1085, "volume_usd": 51448391, "open_interest_usd": 3137604, "volume_24h_usd": null, "as_of": "2026-10-14T21:28:07Z"}, {"market_id": "tec-mlb-wsleague-2026-11-01-w-al", "title": "League to Win World Series: American League", "market_kind": "futures", "status": "open", "result": null, "close_time": "2026-11-16T04:00:00Z", "yes_price": 0.325, "volume_usd": 45735751, "open_interest_usd": 5716720.69, "volume_24h_usd": null, "as_of": "2026-10-14T21:27:15Z"}], "as_of": "2026-10-14T21:28:07Z", "source": "polymarket-us-gateway", "coverage": {"venue": "polymarket-us", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:23Z", "mode": "snapshot_only", "wallets": false, "gaps": null, "note": "Market snapshots of the busiest markets. The gateway has no trade tape and no trader ids. Volume and open interest are share counts valued in dollars. History starts when recording started."}}
+                hyperliquid:
+                  summary: The two HIP-4 outcomes with the most dollars traded in 24 hours (venue=hyperliquid, limit=2)
+                  value: {"kind": "pm_top_markets", "venue": "hyperliquid", "items": [{"market_id": "#111390", "title": "Paris Saint Germain", "market_kind": "sportsContestParticipant2", "status": "closed", "result": null, "close_time": null, "yes_price": 0.9997, "volume_usd": null, "open_interest_usd": null, "volume_24h_usd": 6487.90957, "as_of": "2026-10-14T21:25:12Z"}, {"market_id": "#73500", "title": "xyz:SPCX 1-minute candle 135", "market_kind": "binaryPrice", "status": "open", "result": null, "close_time": "2026-10-30T20:00:00Z", "yes_price": 0.5, "volume_usd": null, "open_interest_usd": null, "volume_24h_usd": 5937.59796, "as_of": "2026-10-14T22:12:17Z"}], "as_of": "2026-10-14T22:12:17Z", "source": "hyperliquid-info", "coverage": {"venue": "hyperliquid", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:30Z", "mode": "recorded", "wallets": true, "gaps": 11, "note": "Every Hyperliquid HIP-4 outcome fill since recording started, read from the public WebSocket, with both wallets. A gap is a reconnect whose catch-up page did not reach the stored tape. Results appear once a settlement fill is found, so some settled outcomes may still show no result."}}
         "400":
           $ref: '#/components/responses/BadRequest'
           description: '`limit` is not a whole number from 1 to 50 (`invalid_query`).'
         "500": {$ref: '#/components/responses/Internal'}
         "503":
-          $ref: '#/components/responses/LiveUnavailable'
+          $ref: '#/components/responses/LiveOrVenueUnavailable'
           description: The first poll of Polymarket has not worked yet (`upstream_unavailable`). `Retry-After` and `retry_after_s` are both 10 (seconds).
         "504": {$ref: '#/components/responses/DeadlineExceeded'}
   /internal/v1/pm/trades/large:
@@ -340,8 +388,11 @@ paths:
 
         `fetched_at`, `stale` and the `X-Sona-Cache: stale` header work as on the top markets route. `source` is always `polymarket-data`. With a high `min_usd` the list may be empty, because only the newest 200 trades of $10,000 or more are kept.
 
-        Errors: 400 `invalid_query` for a `limit` outside 1 to 100 or a `min_usd` that is not a number of at least 10000. 503 `upstream_unavailable` before the first poll has worked, with `Retry-After` 10. 504 `deadline_exceeded` only when `Sona-Deadline-Ms` is 0 or less.
+        **Other venues.** With `venue=kalshi` or `hyperliquid` the answer is the newest recorded trades of at least `min_usd`, from the collector's tape, and an item is a `VenueTrade`. Kalshi keeps only prints of at least $10,000 and has no wallets, so `wallet` is `null`. Hyperliquid fills are mostly small, so the list is often empty. Its `wallet` is the taker. `polymarket-us` has no trade tape and `levr` has positions and not trades, so both answer 400 `invalid_query`.
+
+        Errors: 400 `invalid_query` for a `limit` outside 1 to 100, a `min_usd` that is not a number of at least 10000, or a `venue` that is not served. 503 `upstream_unavailable` before the first poll has worked, with `Retry-After` 10, and for another venue when Postgres is down, with `Retry-After` 1. 504 `deadline_exceeded` only when `Sona-Deadline-Ms` is 0 or less.
       parameters:
+        - $ref: '#/components/parameters/Venue'
         - name: limit
           in: query
           required: false
@@ -367,18 +418,97 @@ paths:
           headers: *liveHeaders
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/PmLargeTrades'}
+              schema: {oneOf: [{$ref: '#/components/schemas/PmLargeTrades'}, {$ref: '#/components/schemas/PmVenueLargeTrades'}]}
               examples:
                 two:
                   summary: The two newest large trades (limit=2)
                   value: {"kind": "pm_large_trades", "items": [{"tx": "0x3db3131c0c9674d312cbf871ed607837098862704501a2510a5ced86f143224f", "time": "2026-10-13T18:29:57Z", "wallet": "0x0f6f76ced62a911bccef92f50faaff143854d977", "question": "Will PSV win on 2026-10-13?", "side": "BUY", "outcome": "Yes", "size": 70000, "price": 0.19, "usd": 13300}, {"tx": "0x35ebc3d9fc2033c74ea27f9e7b96b8baf6085a9c6b9fc0a2d1e5d0ff5bd6c1c2", "time": "2026-10-13T18:29:57Z", "wallet": "0x5815db9fdf0e0ffdc1d1f759916b221339570ae7", "question": "Spread: FC Barcelona (-1.5)", "side": "BUY", "outcome": "Galatasaray SK", "size": 20683.384694, "price": 0.4834798631, "usd": 10000}], "fetched_at": "2026-10-13T18:30:00Z", "stale": false, "source": "polymarket-data"}
+                kalshi:
+                  summary: The two newest Kalshi prints of at least $10,000 (venue=kalshi, limit=2)
+                  value: {"kind": "pm_large_trades", "venue": "kalshi", "items": [{"id": "0725c8d0-9ad1-ac44-90e2-41e6bdcebff0", "time": "2026-10-14T22:30:33Z", "market_id": "KXNCAAFTOTAL-26OCT14WKUSHSU-53", "question": "Full Game: Over 52.5 points scored", "side": "yes", "wallet": null, "size": 32508.41, "yes_price": 0.53, "usd": 17229.4573}, {"id": "0725cea3-0eb1-abce-2bcf-79f884a51035", "time": "2026-10-14T22:29:52Z", "market_id": "KXITFMATCH-26OCT14STOCUN-CUN", "question": "Julian Cundom wins", "side": "yes", "wallet": null, "size": 12188, "yes_price": 0.94, "usd": 11456.72}], "source": "kalshi-api", "coverage": {"venue": "kalshi", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:26Z", "mode": "partial_tape", "wallets": false, "gaps": null, "note": "Market snapshots of the 500 markets with the most 24-hour volume, and only the prints that cost the taker at least $10,000. Kalshi publishes no trader ids. History starts when recording started."}}
+                hyperliquid_none:
+                  summary: No HIP-4 fill of $10,000 has been recorded (venue=hyperliquid)
+                  value: {"kind": "pm_large_trades", "venue": "hyperliquid", "items": [], "source": "hyperliquid-info", "coverage": {"venue": "hyperliquid", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:30Z", "mode": "recorded", "wallets": true, "gaps": 11, "note": "Every Hyperliquid HIP-4 outcome fill since recording started, read from the public WebSocket, with both wallets. A gap is a reconnect whose catch-up page did not reach the stored tape. Results appear once a settlement fill is found, so some settled outcomes may still show no result."}}
         "400":
           $ref: '#/components/responses/BadRequest'
           description: '`limit` is not a whole number from 1 to 100, or `min_usd` is not a number of at least 10000 (`invalid_query`).'
         "500": {$ref: '#/components/responses/Internal'}
         "503":
-          $ref: '#/components/responses/LiveUnavailable'
+          $ref: '#/components/responses/LiveOrVenueUnavailable'
           description: The first poll of Polymarket has not worked yet (`upstream_unavailable`). `Retry-After` and `retry_after_s` are both 10 (seconds).
+        "504": {$ref: '#/components/responses/DeadlineExceeded'}
+  /internal/v1/pm/venues:
+    get:
+      operationId: getVenues
+      tags: [Venues]
+      summary: List the venues the service knows
+      description: |
+        Call this to see which venues you can pass as `venue`, how each is recorded and when it was last read. The first item is `polymarket`, whose `since` is the date of its first order-book trade and whose `last_ok` is the time of the last good poll of the live feed (`null` before the first poll). The others come from the collector: `since` is when recording started and `last_ok` the end of the last collector job that worked.
+
+        `mode` says what the record is. `history_and_live` is Polymarket. `recorded` is a full tape since `since`, with wallets. `partial_tape` is market snapshots plus only the trades above a size floor. `snapshot_only` is market snapshots and no trades. `wallets` is `true` where traders have ids and so a trader route and leaderboards exist. `note` states the limits in a sentence.
+
+        Errors: 503 `upstream_unavailable` when Postgres cannot be reached, with `Retry-After` 1. 504 `deadline_exceeded` when the budget runs out.
+      parameters:
+        - $ref: '#/components/parameters/DeadlineMs'
+      responses:
+        "200":
+          description: The venue table was read. The body is the list of venues.
+          headers: &venueHeaders
+            X-Request-Id: {$ref: '#/components/headers/RequestId'}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PmVenues'}
+              examples:
+                recorded:
+                  summary: Polymarket and the four recorded venues
+                  value: {"kind": "pm_venues", "items": [{"code": "polymarket", "name": "Polymarket", "quote": "USDC", "wallets": true, "since": "2022-11-21T00:00:00Z", "last_ok": "2026-10-14T22:47:24Z", "mode": "history_and_live", "note": "Order-book history through Polygon block 85,948,288 on 2026-04-24, and a live feed of the busiest markets and largest recent trades."}, {"code": "hyperliquid", "name": "Hyperliquid HIP-4", "quote": "USDC", "wallets": true, "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:30Z", "mode": "recorded", "note": "Every Hyperliquid HIP-4 outcome fill since recording started, read from the public WebSocket, with both wallets. A gap is a reconnect whose catch-up page did not reach the stored tape. Results appear once a settlement fill is found, so some settled outcomes may still show no result."}, {"code": "kalshi", "name": "Kalshi", "quote": "USD", "wallets": false, "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:26Z", "mode": "partial_tape", "note": "Market snapshots of the 500 markets with the most 24-hour volume, and only the prints that cost the taker at least $10,000. Kalshi publishes no trader ids. History starts when recording started."}, {"code": "levr", "name": "Levr Bet", "quote": "USDC", "wallets": true, "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:26Z", "mode": "recorded", "note": "Leveraged positions, liquidations and settlements of Levr Bet on Monad, read from the venue's unofficial indexer. Payouts are worked out from redemption rows, and void refunds and the partial return of a liquidation are not published. Positions opened before recording started are missing."}, {"code": "polymarket-us", "name": "Polymarket US", "quote": "USD", "wallets": false, "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:23Z", "mode": "snapshot_only", "note": "Market snapshots of the busiest markets. The gateway has no trade tape and no trader ids. Volume and open interest are share counts valued in dollars. History starts when recording started."}]}
+        "500": {$ref: '#/components/responses/Internal'}
+        "503": {$ref: '#/components/responses/Unavailable'}
+        "504": {$ref: '#/components/responses/DeadlineExceeded'}
+  /internal/v1/pm/markets/{venue}/{id}/history:
+    get:
+      operationId: getMarketHistory
+      tags: [Venues]
+      summary: Get the recorded history of one market
+      description: |
+        Call this to chart one market of Kalshi, Polymarket US or Hyperliquid from what the collector recorded. The `id` is the `market_id` of the top markets route (a Hyperliquid id starts with `#`, written `%23` in a path).
+
+        For `kalshi` and `polymarket-us` an item is a snapshot of the market: the Yes price and the volume, open interest and 24-hour volume the venue reported, with `null` for a figure the venue does not report. Kalshi snapshots only the 500 markets with the most 24-hour volume, so a quieter market has a few points or none. For `hyperliquid` there are no snapshots, and an item is the last trade price in a 5 minute bucket of the fill tape, with the three volume fields `null`.
+
+        Items run oldest first from `since` (RFC 3339, the last 24 hours by default) and are cut to `limit` (1 to 1000, 200 by default), so a long window needs a larger `limit` or a later `since`. The market block repeats what the venue says about the market, with `result` set once it has settled and `null` before.
+
+        Errors: 400 `invalid_query` for a `venue` that has no history (`levr` and `polymarket` do not), a `since` that is not a time, or a `limit` outside 1 to 1000. 404 `not_found` for a market that was never recorded. 503 `upstream_unavailable` when Postgres cannot be reached, with `Retry-After` 1. 504 `deadline_exceeded` when the budget runs out.
+      parameters:
+        - $ref: '#/components/parameters/VenuePath'
+        - $ref: '#/components/parameters/MarketId'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/HistoryLimit'
+        - $ref: '#/components/parameters/DeadlineMs'
+      responses:
+        "200":
+          description: The market is recorded. The body is its history, which may be empty.
+          headers: *venueHeaders
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PmMarketHistory'}
+              examples:
+                kalshi:
+                  summary: Three snapshots of a Kalshi market (venue=kalshi, limit=3)
+                  value: {"kind": "pm_market_history", "venue": "kalshi", "market": {"id": "KXMLBGAME-26OCT142000MILLAD-LAD", "title": "Los Angeles D wins", "market_kind": "KXMLBGAME", "status": "open", "result": null, "close_time": "2026-10-18T00:00:00Z"}, "items": [{"time": "2026-10-14T22:00:21Z", "yes_price": 0.62, "volume_usd": 1822758.99, "open_interest_usd": 1718325.19, "volume_24h_usd": 1643687.43}, {"time": "2026-10-14T22:05:45Z", "yes_price": 0.62, "volume_usd": 1847410.14, "open_interest_usd": 1741711.4, "volume_24h_usd": 1643687.43}, {"time": "2026-10-14T22:31:04Z", "yes_price": 0.62, "volume_usd": 2075833.39, "open_interest_usd": 1965466.55, "volume_24h_usd": 1888224.08}], "source": "kalshi-api", "coverage": {"venue": "kalshi", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:53Z", "mode": "partial_tape", "wallets": false, "gaps": 1, "note": "Market snapshots of the 500 markets with the most 24-hour volume, and only the prints that cost the taker at least $10,000. Kalshi publishes no trader ids. History starts when recording started."}}
+                polymarket_us:
+                  summary: Snapshots of a Polymarket US market, which has no 24-hour volume
+                  value: {"kind": "pm_market_history", "venue": "polymarket-us", "market": {"id": "paccc-usho-midterms-2026-11-03-rep", "title": "U.S House Midterm Winner: Republican Party", "market_kind": "election", "status": "open", "result": null, "close_time": "2027-02-02T04:59:00Z"}, "items": [{"time": "2026-10-14T21:11:02Z", "yes_price": 0.1085, "volume_usd": 51448391, "open_interest_usd": 3137604, "volume_24h_usd": null}, {"time": "2026-10-14T21:28:07Z", "yes_price": 0.1085, "volume_usd": 51448391, "open_interest_usd": 3137604, "volume_24h_usd": null}], "source": "polymarket-us-gateway", "coverage": {"venue": "polymarket-us", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:23Z", "mode": "snapshot_only", "wallets": false, "gaps": null, "note": "Market snapshots of the busiest markets. The gateway has no trade tape and no trader ids. Volume and open interest are share counts valued in dollars. History starts when recording started."}}
+                hyperliquid:
+                  summary: Last trade price per 5 minutes of a HIP-4 outcome
+                  value: {"kind": "pm_market_history", "venue": "hyperliquid", "market": {"id": "#73500", "title": "xyz:SPCX 1-minute candle 135", "market_kind": "binaryPrice", "status": "open", "result": null, "close_time": "2026-10-30T20:00:00Z"}, "items": [{"time": "2026-10-14T21:10:00Z", "yes_price": 0.70463, "volume_usd": null, "open_interest_usd": null, "volume_24h_usd": null}, {"time": "2026-10-14T21:40:00Z", "yes_price": 0.705, "volume_usd": null, "open_interest_usd": null, "volume_24h_usd": null}, {"time": "2026-10-14T22:10:00Z", "yes_price": 0.5, "volume_usd": null, "open_interest_usd": null, "volume_24h_usd": null}], "source": "hyperliquid-info", "coverage": {"venue": "hyperliquid", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:53Z", "mode": "recorded", "wallets": true, "gaps": 11, "note": "Every Hyperliquid HIP-4 outcome fill since recording started, read from the public WebSocket, with both wallets. A gap is a reconnect whose catch-up page did not reach the stored tape. Results appear once a settlement fill is found, so some settled outcomes may still show no result."}}
+        "400":
+          $ref: '#/components/responses/BadRequest'
+          description: The `venue` has no history, `since` is not a time, or `limit` is not a whole number from 1 to 1000 (`invalid_query`).
+        "404":
+          $ref: '#/components/responses/NotFound'
+          description: The market was never recorded for this venue (`not_found`).
+        "500": {$ref: '#/components/responses/Internal'}
+        "503": {$ref: '#/components/responses/Unavailable'}
         "504": {$ref: '#/components/responses/DeadlineExceeded'}
   /healthz:
     get:
@@ -472,6 +602,57 @@ components:
       examples:
         default: {summary: Ordinary markets, value: other}
         all: {summary: Every kind, value: all}
+    Venue:
+      name: venue
+      in: query
+      required: false
+      description: |
+        Which venue to read: `polymarket` (the default, so a call without it answers as before), `kalshi`, `polymarket-us`, `hyperliquid` or `levr`. Each route says which venues it serves, and one it does not serve answers 400 `invalid_query`, as does any other value.
+      schema: {type: string, enum: [polymarket, kalshi, polymarket-us, hyperliquid, levr], default: polymarket}
+      examples:
+        default: {summary: The default, value: polymarket}
+        kalshi: {summary: Kalshi, value: kalshi}
+        hyperliquid: {summary: Hyperliquid HIP-4, value: hyperliquid}
+        levr: {summary: Levr Bet, value: levr}
+    VenuePath:
+      name: venue
+      in: path
+      required: true
+      description: |
+        The venue whose market to read: `kalshi`, `polymarket-us` or `hyperliquid`. `polymarket` has no recorded history here and `levr` has no markets, and both answer 400 `invalid_query`.
+      schema: {type: string, enum: [kalshi, polymarket-us, hyperliquid]}
+      examples:
+        kalshi: {summary: Kalshi, value: kalshi}
+        hyperliquid: {summary: Hyperliquid HIP-4, value: hyperliquid}
+    MarketId:
+      name: id
+      in: path
+      required: true
+      description: |
+        The venue's id of the market, the `market_id` of the top markets route. A Kalshi id is a ticker, a Polymarket US id is a slug and a Hyperliquid id is `#` and a number, written `%23` in a path.
+      schema: {type: string, minLength: 1}
+      examples:
+        kalshi: {summary: A Kalshi ticker, value: KXMLBGAME-26OCT142000MILLAD-LAD}
+        hyperliquid: {summary: A HIP-4 outcome, value: "#73500"}
+    Since:
+      name: since
+      in: query
+      required: false
+      description: |
+        The start of the window as an RFC 3339 time, such as `2026-10-14T12:00:00Z`. The default is 24 hours before the call. Anything that is not a time answers 400 `invalid_query`.
+      schema: {type: string, format: date-time}
+      examples:
+        day: {summary: From noon on a day, value: "2026-10-14T12:00:00Z"}
+    HistoryLimit:
+      name: limit
+      in: query
+      required: false
+      description: |
+        The most items to return, from 1 to 1000. The default is 200. Anything that is not a whole number in that range answers 400 `invalid_query`.
+      schema: {type: integer, minimum: 1, maximum: 1000, default: 200}
+      examples:
+        default: {summary: The default, value: 200}
+        small: {summary: A short list, value: 3}
     DeadlineMs:
       name: Sona-Deadline-Ms
       in: header
@@ -485,20 +666,20 @@ components:
   headers:
     SonaFinality:
       description: |
-        How settled the data is. It is always `finalized`, because the history ends at a block that is long final. It is present on every successful data answer and absent from errors and probes.
-      required: true
+        How settled the data is. It is always `finalized`, because the history ends at a block that is long final. It is present on every successful Polymarket history answer, and absent from errors, probes and answers for another venue.
+      required: false
       schema: {type: string, enum: [finalized]}
       example: finalized
     SonaBlock:
       description: |
-        The Polygon block number that the data goes through, as a decimal integer. It is `85948288` for every answer, the last block of the dataset. It is the same as `coverage.through.block` in the body and is absent from errors and probes.
-      required: true
+        The Polygon block number that the data goes through, as a decimal integer. It is `85948288` for every answer, the last block of the dataset. It is the same as `coverage.through.block` in the body and is absent from errors, probes and answers for another venue.
+      required: false
       schema: {type: integer, minimum: 0}
       example: 85948288
     SonaBlockTime:
       description: |
-        The timestamp of that block as Unix time in whole seconds (UTC). It is `1777016620` for every answer, which is 2026-04-24T07:43:40Z, the same instant as `coverage.through.time` in the body. It is absent from errors and probes.
-      required: true
+        The timestamp of that block as Unix time in whole seconds (UTC). It is `1777016620` for every answer, which is 2026-04-24T07:43:40Z, the same instant as `coverage.through.time` in the body. It is absent from errors, probes and answers for another venue.
+      required: false
       schema: {type: integer, minimum: 0}
       example: 1777016620
     RequestId:
@@ -525,6 +706,12 @@ components:
       required: false
       schema: {type: string, enum: [stale]}
       example: stale
+    AnyRetryAfter:
+      description: |
+        How many whole seconds to wait before you send the request again. It is `10` while the Polymarket live feed has not been polled yet and `1` when Postgres cannot be reached.
+      required: true
+      schema: {type: integer, enum: [1, 10]}
+      example: 10
     LiveRetryAfter:
       description: |
         How many whole seconds to wait before you send the request again. It is always `10` on the 503 of a live route, because the poller runs once a minute.
@@ -541,7 +728,7 @@ components:
         application/problem+json:
           schema: {allOf: [{$ref: '#/components/schemas/Problem'}, {properties: {code: {enum: [invalid_id, invalid_query]}}}]}
     NotFound:
-      description: Nothing is there (`not_found`). That is a wallet with no fills, and also a path or method that no route serves, which has the detail `No such route.`.
+      description: Nothing is there (`not_found`). That is a wallet with no fills, a market or a venue wallet that was never recorded, and also a path or method that no route serves, which has the detail `No such route.`.
       headers: *problemHeaders
       content:
         application/problem+json:
@@ -553,7 +740,7 @@ components:
         application/problem+json:
           schema: {allOf: [{$ref: '#/components/schemas/Problem'}, {properties: {code: {enum: [internal]}}}]}
     Unavailable:
-      description: The service has no database to read (`upstream_unavailable`). No valid database file exists yet, because the first build has not finished or the file is not a DuckDB database. The service looks again every 10 seconds, so retry. `Retry-After` and `retry_after_s` are both 1 (second).
+      description: The service has no database to read (`upstream_unavailable`). No valid database file exists yet, because the first build has not finished or the file is not a DuckDB database, or, on a venue route, Postgres cannot be reached. The service looks again every 10 seconds, so retry. `Retry-After` and `retry_after_s` are both 1 (second).
       headers:
         Cache-Control: {$ref: '#/components/headers/NoStore'}
         Retry-After: {$ref: '#/components/headers/RetryAfter'}
@@ -570,6 +757,15 @@ components:
       content:
         application/problem+json:
           schema: {allOf: [{$ref: '#/components/schemas/Problem'}, {properties: {code: {enum: [upstream_unavailable]}, retry_after_s: {enum: [10]}}}, {required: [retry_after_s]}]}
+    LiveOrVenueUnavailable:
+      description: The data is not available (`upstream_unavailable`). For `polymarket` the first poll of Polymarket has not worked yet, and `Retry-After` and `retry_after_s` are 10 (seconds). For another venue Postgres cannot be reached, and both are 1.
+      headers:
+        Cache-Control: {$ref: '#/components/headers/NoStore'}
+        Retry-After: {$ref: '#/components/headers/AnyRetryAfter'}
+        X-Request-Id: {$ref: '#/components/headers/RequestId'}
+      content:
+        application/problem+json:
+          schema: {allOf: [{$ref: '#/components/schemas/Problem'}, {properties: {code: {enum: [upstream_unavailable]}, retry_after_s: {enum: [1, 10]}}}, {required: [retry_after_s]}]}
     DeadlineExceeded:
       description: The time budget ran out (`deadline_exceeded`). Either the database had not answered within `Sona-Deadline-Ms` (5000 ms when the header is absent), or the header was 0 or less. Retry, with a larger budget if the call is a slow one.
       headers: *problemHeaders
@@ -1335,3 +1531,460 @@ components:
           type: number
           minimum: 0
           description: "`size` times `price` in dollars, rounded to cents."
+    VenueCoverage:
+      description: What a recorded venue holds, from when, and how complete it is. It replaces the Polymarket `coverage` on venue answers.
+      type: object
+      additionalProperties: false
+      required: [venue, since, last_ok, mode, wallets, gaps, note]
+      properties:
+        venue:
+          type: string
+          enum: [kalshi, polymarket-us, hyperliquid, levr]
+          description: The venue this describes.
+        since:
+          description: When recording of this venue started. There is no earlier data.
+          $ref: '#/components/schemas/Time'
+        last_ok:
+          description: When the last collector job of this venue worked, or `null` if none has yet.
+          oneOf:
+            - $ref: '#/components/schemas/Time'
+            - type: "null"
+        mode:
+          type: string
+          enum: [recorded, snapshot_only, partial_tape, no_wallets]
+          description: '`recorded` is a full tape with wallets. `partial_tape` is snapshots plus only the trades above a size floor. `snapshot_only` is snapshots and no trades. `no_wallets` is a tape without trader ids.'
+        wallets:
+          type: boolean
+          description: '`true` when the venue has trader ids, so it has a trader route and leaderboards.'
+        gaps:
+          type: [integer, "null"]
+          minimum: 0
+          description: How many times the collector knows it missed trades since recording started, or `null` for a venue that has no trade tape.
+        note:
+          type: string
+          description: The limits of this record in a sentence.
+    PmVenues:
+      description: The venues the service knows.
+      type: object
+      additionalProperties: false
+      required: [kind, items]
+      properties:
+        kind:
+          type: string
+          enum: [pm_venues]
+          description: Always `pm_venues`. It names the shape of this object.
+        items:
+          type: array
+          description: Polymarket first, then the recorded venues in code order.
+          items: {$ref: '#/components/schemas/VenueItem'}
+    VenueItem:
+      type: object
+      additionalProperties: false
+      required: [code, name, quote, wallets, since, last_ok, mode, note]
+      properties:
+        code:
+          type: string
+          enum: [polymarket, hyperliquid, kalshi, levr, polymarket-us]
+          description: The value to pass as `venue`.
+        name:
+          type: string
+          description: The venue's name.
+        quote:
+          type: string
+          enum: [USDC, USD]
+          description: The currency its prices and amounts are in.
+        wallets:
+          type: boolean
+          description: '`true` when the venue has trader ids.'
+        since:
+          description: When the record starts.
+          $ref: '#/components/schemas/Time'
+        last_ok:
+          description: When the venue was last read successfully, or `null` if it has not been.
+          oneOf:
+            - $ref: '#/components/schemas/Time'
+            - type: "null"
+        mode:
+          type: string
+          enum: [history_and_live, recorded, snapshot_only, partial_tape, no_wallets]
+          description: What kind of record it is. See the route description.
+        note:
+          type: string
+          description: The limits of the record in a sentence.
+    PmVenueTopMarkets:
+      description: The most active markets of a recorded venue.
+      type: object
+      additionalProperties: false
+      required: [kind, venue, items, as_of, source, coverage]
+      properties:
+        kind:
+          type: string
+          enum: [pm_top_markets]
+          description: Always `pm_top_markets`. It names the shape of this object.
+        venue:
+          type: string
+          enum: [kalshi, polymarket-us, hyperliquid]
+          description: The venue of the markets.
+        items:
+          type: array
+          description: The markets in order of 24-hour volume, highest first (total volume for `polymarket-us`).
+          items: {$ref: '#/components/schemas/VenueMarket'}
+        as_of:
+          description: The time of the newest snapshot among the items, or `null` when the list is empty.
+          oneOf:
+            - $ref: '#/components/schemas/Time'
+            - type: "null"
+        source:
+          $ref: '#/components/schemas/VenueSource'
+        coverage: {$ref: '#/components/schemas/VenueCoverage'}
+    VenueSource:
+      type: string
+      enum: [kalshi-api, polymarket-us-gateway, hyperliquid-info, levr-squid]
+      description: Where the collector reads the venue's data.
+    VenueMarket:
+      type: object
+      additionalProperties: false
+      required: [market_id, title, market_kind, status, result, close_time, yes_price, volume_usd, open_interest_usd, volume_24h_usd, as_of]
+      properties:
+        market_id:
+          type: string
+          description: The venue's id of the market.
+        title:
+          type: string
+          description: The market's title as the venue words it.
+        market_kind:
+          type: string
+          description: The venue's own category of the market, such as a Kalshi series or a HIP-4 outcome type. It can be empty.
+        status:
+          type: string
+          description: The venue's state of the market, such as `open`, `closed` or `resolved`.
+        result:
+          type: [string, "null"]
+          description: The settled result when the venue has one, such as `yes`, `no` or a fraction, and `null` before.
+        close_time:
+          description: When the market closes, or `null` when the venue gives none.
+          oneOf:
+            - $ref: '#/components/schemas/Time'
+            - type: "null"
+        yes_price:
+          description: The latest Yes price, from 0 to 1.
+          $ref: '#/components/schemas/Ratio'
+        volume_usd:
+          type: [number, "null"]
+          minimum: 0
+          description: The total traded, in dollars as a plain JSON number, or `null` when the venue does not report it.
+        open_interest_usd:
+          type: [number, "null"]
+          minimum: 0
+          description: The open interest in dollars, or `null` when the venue does not report it.
+        volume_24h_usd:
+          type: [number, "null"]
+          minimum: 0
+          description: The dollars traded in the last 24 hours, or `null` when the venue does not report it.
+        as_of:
+          description: The time of the snapshot or trade that these figures come from.
+          $ref: '#/components/schemas/Time'
+    PmVenueLargeTrades:
+      description: The newest large trades of a recorded venue.
+      type: object
+      additionalProperties: false
+      required: [kind, venue, items, source, coverage]
+      properties:
+        kind:
+          type: string
+          enum: [pm_large_trades]
+          description: Always `pm_large_trades`. It names the shape of this object.
+        venue:
+          type: string
+          enum: [kalshi, hyperliquid]
+          description: The venue of the trades.
+        items:
+          type: array
+          description: The trades, newest first, which may be empty.
+          items: {$ref: '#/components/schemas/VenueTrade'}
+        source:
+          $ref: '#/components/schemas/VenueSource'
+        coverage: {$ref: '#/components/schemas/VenueCoverage'}
+    VenueTrade:
+      type: object
+      additionalProperties: false
+      required: [id, time, market_id, question, side, wallet, size, yes_price, usd]
+      properties:
+        id:
+          type: string
+          description: The venue's id of the trade.
+        time:
+          $ref: '#/components/schemas/Time'
+        market_id:
+          type: string
+          description: The id of the market, as in the top markets route.
+        question:
+          type: string
+          description: The market's title, or empty when the market is not recorded.
+        side:
+          type: string
+          description: What the taker did. For Kalshi it is `yes` or `no`, the side the taker paid for. For Hyperliquid it is `buy` or `sell` of the Yes coin.
+        wallet:
+          description: The taker's wallet for Hyperliquid, and `null` for Kalshi, which publishes no trader ids.
+          oneOf:
+            - $ref: '#/components/schemas/Address'
+            - type: "null"
+        size:
+          type: number
+          minimum: 0
+          description: The contracts or shares traded, as a plain JSON number.
+        yes_price:
+          description: The Yes price of the trade, from 0 to 1.
+          $ref: '#/components/schemas/Ratio'
+        usd:
+          type: number
+          minimum: 0
+          description: What the taker paid, in dollars as a plain JSON number.
+    PmMarketHistory:
+      description: The recorded history of one market.
+      type: object
+      additionalProperties: false
+      required: [kind, venue, market, items, source, coverage]
+      properties:
+        kind:
+          type: string
+          enum: [pm_market_history]
+          description: Always `pm_market_history`. It names the shape of this object.
+        venue:
+          type: string
+          enum: [kalshi, polymarket-us, hyperliquid]
+          description: The venue of the market.
+        market:
+          type: object
+          additionalProperties: false
+          required: [id, title, market_kind, status, result, close_time]
+          description: What the venue says about the market.
+          properties:
+            id: {type: string, description: "The venue's id of the market."}
+            title: {type: string, description: "The market's title."}
+            market_kind: {type: string, description: "The venue's own category of the market."}
+            status: {type: string, description: "The venue's state of the market."}
+            result: {type: [string, "null"], description: "The settled result, or `null` before."}
+            close_time:
+              description: When the market closes, or `null`.
+              oneOf:
+                - $ref: '#/components/schemas/Time'
+                - type: "null"
+        items:
+          type: array
+          description: The points of the window, oldest first.
+          items: {$ref: '#/components/schemas/VenuePoint'}
+        source:
+          $ref: '#/components/schemas/VenueSource'
+        coverage: {$ref: '#/components/schemas/VenueCoverage'}
+    VenuePoint:
+      type: object
+      additionalProperties: false
+      required: [time, yes_price, volume_usd, open_interest_usd, volume_24h_usd]
+      properties:
+        time:
+          description: When the snapshot was taken, or the start of the 5 minute bucket for Hyperliquid.
+          $ref: '#/components/schemas/Time'
+        yes_price:
+          description: The Yes price, from 0 to 1.
+          $ref: '#/components/schemas/Ratio'
+        volume_usd:
+          type: [number, "null"]
+          minimum: 0
+          description: The total traded in dollars, or `null` when the venue does not report it.
+        open_interest_usd:
+          type: [number, "null"]
+          minimum: 0
+          description: The open interest in dollars, or `null`.
+        volume_24h_usd:
+          type: [number, "null"]
+          minimum: 0
+          description: The dollars traded in the last 24 hours, or `null`.
+    WinRate:
+      type: object
+      additionalProperties: false
+      required: [value, wilson_lower, shown, floor]
+      description: The share of resolved markets that were won, shown only from the floor, as in the Polymarket trader record.
+      properties:
+        value: {type: [number, "null"], minimum: 0, maximum: 1, description: '`won_markets` divided by `resolved_markets`, to 4 decimals, and `null` below the floor.'}
+        wilson_lower: {type: [number, "null"], minimum: 0, maximum: 1, description: "The lower bound of the 95% Wilson interval of `value`, and `null` below the floor."}
+        shown: {type: boolean, description: '`true` from the floor of resolved markets.'}
+        floor: {type: integer, description: "The number of resolved markets from which it is shown, 30."}
+    PmHyperliquidTrader:
+      description: The record of one Hyperliquid HIP-4 wallet, in the shape of the Polymarket trader record without the owner, wash and calibration parts.
+      type: object
+      additionalProperties: false
+      required: [kind, venue, wallet, activity, pnl, skill, coverage]
+      properties:
+        kind:
+          type: string
+          enum: [pm_trader]
+          description: Always `pm_trader`. It names the shape of this object.
+        venue:
+          type: string
+          enum: [hyperliquid]
+          description: Always `hyperliquid`.
+        wallet:
+          description: The wallet, in lowercase.
+          $ref: '#/components/schemas/Address'
+        activity:
+          type: object
+          additionalProperties: false
+          required: [fills, markets, volume]
+          description: What the wallet traded, on its own side so that nothing is counted twice.
+          properties:
+            fills: {type: integer, minimum: 1, description: "The number of the wallet's own fills."}
+            markets: {type: integer, minimum: 1, description: "The outcomes it traded."}
+            volume: {description: "The value of its fills in USDC.", $ref: '#/components/schemas/Amount'}
+        pnl:
+          type: object
+          additionalProperties: false
+          required: [realized, gross, fees, resolved_markets, won_markets, win_rate]
+          description: Profit and loss from the recorded tape only, counted like the Polymarket record, with fills netted by outcome and settled at the venue's payout.
+          properties:
+            realized: {description: "Gross minus fees in USDC.", $ref: '#/components/schemas/Amount'}
+            gross: {description: "The realized profit before fees, with settled outcomes valued at their payout.", $ref: '#/components/schemas/Amount'}
+            fees: {description: "Fees paid. They are 0 because the tape carries none.", $ref: '#/components/schemas/Amount'}
+            resolved_markets: {type: integer, minimum: 0, description: "The outcomes it traded that have settled."}
+            won_markets: {type: integer, minimum: 0, description: "The settled outcomes with a profit."}
+            win_rate: {$ref: '#/components/schemas/WinRate'}
+        skill:
+          type: object
+          additionalProperties: false
+          required: [rated, floor, brier, edge, edge_se]
+          description: Forecasting skill over question-type outcomes only (sports, awards, policy rates and IPOs). Recurring price outcomes are not rated.
+          properties:
+            rated: {type: boolean, description: '`true` from the floor of rated outcomes.'}
+            floor:
+              type: object
+              additionalProperties: false
+              required: [markets, events]
+              description: The rating floor, where each outcome counts as its own event.
+              properties:
+                markets: {type: integer, description: "The rated outcomes needed."}
+                events: {type: integer, description: "The events needed."}
+            brier: {type: [number, "null"], description: "The mean squared gap between forecast and outcome, and `null` below the floor."}
+            edge: {type: [number, "null"], description: "The mean of outcome minus forecast, and `null` below the floor."}
+            edge_se: {type: [number, "null"], description: "The standard error of the edge, and `null` below the floor."}
+        coverage: {$ref: '#/components/schemas/VenueCoverage'}
+    PmLevrTrader:
+      description: The leveraged positions of one Levr Bet wallet.
+      type: object
+      additionalProperties: false
+      required: [kind, venue, wallet, positions, open, won, lost, liquidated, voided, stake, size, leverage, liquidation_rate, win_rate, realized, first_position, last_position, coverage]
+      properties:
+        kind:
+          type: string
+          enum: [pm_levr_trader]
+          description: Always `pm_levr_trader`. It names the shape of this object.
+        venue:
+          type: string
+          enum: [levr]
+          description: Always `levr`.
+        wallet:
+          description: The wallet, in lowercase.
+          $ref: '#/components/schemas/Address'
+        positions: {type: integer, minimum: 1, description: "The positions it opened since recording started."}
+        open: {type: integer, minimum: 0, description: "The positions not yet closed."}
+        won: {type: integer, minimum: 0, description: "The positions redeemed with a profit."}
+        lost: {type: integer, minimum: 0, description: "The positions that ended with less than the stake, including those lost when their game settled."}
+        liquidated: {type: integer, minimum: 0, description: "The positions the venue liquidated, each of which loses the whole stake."}
+        voided: {type: integer, minimum: 0, description: "The positions of cancelled games. The refund is not published, so their result is counted as 0."}
+        stake: {description: "The USDC put up across all positions.", $ref: '#/components/schemas/Amount'}
+        size: {description: "The notional size of all positions in USDC.", $ref: '#/components/schemas/Amount'}
+        leverage: {type: number, minimum: 0, description: "Size divided by stake across all positions, to 4 decimals."}
+        liquidation_rate: {description: "Liquidated positions over positions that ended in a win, a loss or a liquidation.", $ref: '#/components/schemas/Ratio'}
+        win_rate: {description: "Won positions over positions that ended in a win, a loss or a liquidation.", $ref: '#/components/schemas/Ratio'}
+        realized: {description: "Payout minus stake over the closed positions, where a liquidation loses the whole stake. A position still open adds nothing.", $ref: '#/components/schemas/Amount'}
+        first_position: {description: "When its first position opened.", $ref: '#/components/schemas/Time'}
+        last_position: {description: "When its last position opened.", $ref: '#/components/schemas/Time'}
+        coverage: {$ref: '#/components/schemas/VenueCoverage'}
+    PmHyperliquidBoard:
+      description: One page of a Hyperliquid HIP-4 leaderboard.
+      type: object
+      additionalProperties: false
+      required: [kind, venue, board, limit, offset, total, rows, coverage]
+      properties:
+        kind:
+          type: string
+          enum: [pm_leaderboard]
+          description: Always `pm_leaderboard`. It names the shape of this object.
+        venue:
+          type: string
+          enum: [hyperliquid]
+          description: Always `hyperliquid`.
+        board:
+          type: string
+          enum: [pnl, volume, skill]
+          description: Which board this page is from.
+        limit: {type: integer, minimum: 1, maximum: 100, description: "The page size that was used."}
+        offset: {type: integer, minimum: 0, maximum: 10000, description: "The number of rows that were skipped."}
+        total: {type: integer, minimum: 0, description: "The wallets on the board, all wallets for `pnl` and `volume` and the rated ones for `skill`."}
+        rows:
+          type: array
+          description: The rows of the page in rank order, empty past the end of the board.
+          items: {$ref: '#/components/schemas/HyperliquidBoardRow'}
+        coverage: {$ref: '#/components/schemas/VenueCoverage'}
+    HyperliquidBoardRow:
+      type: object
+      additionalProperties: false
+      required: [rank, wallet, fills, markets, volume, realized, skill]
+      properties:
+        rank: {type: integer, minimum: 1, description: "The position on the board, counted from 1."}
+        wallet: {description: "The wallet, in lowercase.", $ref: '#/components/schemas/Address'}
+        fills: {type: integer, minimum: 1, description: "The number of the wallet's own fills."}
+        markets: {type: integer, minimum: 0, description: "The outcomes it traded."}
+        volume: {description: "The value of its fills in USDC.", $ref: '#/components/schemas/Amount'}
+        realized: {description: "The realized profit in USDC, as in the trader record.", $ref: '#/components/schemas/Amount'}
+        skill:
+          description: The skill figures of a rated wallet, and `null` for one that is not rated.
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [brier, edge, edge_lb]
+              properties:
+                brier: {type: number, description: "The mean squared gap between forecast and outcome."}
+                edge: {type: number, description: "The mean of outcome minus forecast."}
+                edge_lb: {type: number, description: '`edge` minus 1.96 standard errors. The skill board ranks on it.'}
+            - type: "null"
+    PmLevrBoard:
+      description: One page of a Levr Bet leaderboard.
+      type: object
+      additionalProperties: false
+      required: [kind, venue, board, limit, offset, total, rows, coverage]
+      properties:
+        kind:
+          type: string
+          enum: [pm_leaderboard]
+          description: Always `pm_leaderboard`. It names the shape of this object.
+        venue:
+          type: string
+          enum: [levr]
+          description: Always `levr`.
+        board:
+          type: string
+          enum: [pnl, volume]
+          description: Which board this page is from. `pnl` ranks realized profit and `volume` ranks the size of the positions opened.
+        limit: {type: integer, minimum: 1, maximum: 100, description: "The page size that was used."}
+        offset: {type: integer, minimum: 0, maximum: 10000, description: "The number of rows that were skipped."}
+        total: {type: integer, minimum: 0, description: "The wallets on the board."}
+        rows:
+          type: array
+          description: The rows of the page in rank order, empty past the end of the board.
+          items: {$ref: '#/components/schemas/LevrBoardRow'}
+        coverage: {$ref: '#/components/schemas/VenueCoverage'}
+    LevrBoardRow:
+      type: object
+      additionalProperties: false
+      required: [rank, wallet, positions, stake, size, leverage, liquidations, liquidation_rate, win_rate, realized]
+      properties:
+        rank: {type: integer, minimum: 1, description: "The position on the board, counted from 1."}
+        wallet: {description: "The wallet, in lowercase.", $ref: '#/components/schemas/Address'}
+        positions: {type: integer, minimum: 1, description: "The positions it opened."}
+        stake: {description: "The USDC put up across all positions.", $ref: '#/components/schemas/Amount'}
+        size: {description: "The notional size of all positions in USDC.", $ref: '#/components/schemas/Amount'}
+        leverage: {type: number, minimum: 0, description: "Size divided by stake, to 4 decimals."}
+        liquidations: {type: integer, minimum: 0, description: "The positions the venue liquidated."}
+        liquidation_rate: {description: "Liquidated positions over positions that ended in a win, a loss or a liquidation.", $ref: '#/components/schemas/Ratio'}
+        win_rate: {description: "Won positions over positions that ended in a win, a loss or a liquidation.", $ref: '#/components/schemas/Ratio'}
+        realized: {description: "Payout minus stake over the closed positions.", $ref: '#/components/schemas/Amount'}

@@ -117,7 +117,16 @@ func specCases(ok, empty, broken http.Handler) []specCase {
 	return cases
 }
 
-func checkHeaders(t *testing.T, path string, rec *httptest.ResponseRecorder) {
+// otherVenue is true for a request that the collector's venues answer, which has no Sona stamp and its own retry time
+func otherVenue(path string, req *http.Request) bool {
+	if strings.HasSuffix(path, "/pm/venues") || strings.HasSuffix(path, "/history") {
+		return true
+	}
+	v := req.URL.Query().Get("venue")
+	return v != "" && v != "polymarket"
+}
+
+func checkHeaders(t *testing.T, path string, req *http.Request, rec *httptest.ResponseRecorder) {
 	t.Helper()
 	h := rec.Header()
 	if !requestID.MatchString(h.Get("X-Request-Id")) {
@@ -125,7 +134,8 @@ func checkHeaders(t *testing.T, path string, rec *httptest.ResponseRecorder) {
 	}
 	probe := path == "/healthz" || path == "/readyz"
 	// the live feed is a moving present, so it has no block to stamp
-	stamped := rec.Code == http.StatusOK && !probe && !strings.Contains(path, "/pm/")
+	venue := otherVenue(path, req)
+	stamped := rec.Code == http.StatusOK && !probe && !strings.Contains(path, "/pm/") && !venue
 	for name, want := range map[string]string{"Sona-Finality": "finalized", "Sona-Block": "85948288", "Sona-Block-Time": "1777016620"} {
 		got := h.Get(name)
 		if stamped && got != want {
@@ -143,7 +153,7 @@ func checkHeaders(t *testing.T, path string, rec *httptest.ResponseRecorder) {
 		t.Errorf("Cache-Control %q on an answer that is not a problem", h.Get("Cache-Control"))
 	}
 	wantRetry := "1"
-	if strings.Contains(path, "/pm/") {
+	if strings.Contains(path, "/pm/") && !venue {
 		wantRetry = "10"
 	}
 	if rec.Code == http.StatusServiceUnavailable && !probe && h.Get("Retry-After") != wantRetry {
@@ -256,6 +266,7 @@ func TestSpecValidatesResponses(t *testing.T) {
 	empty := handlerFor(t, openStore(t, filepath.Join(t.TempDir(), "pm.duckdb"), time.Hour))
 	broken := handlerFor(t, failing{err: errors.New("boom")})
 	cases := append(specCases(ok, empty, broken), liveSpecCases(liveHandler(t, false), liveHandler(t, true), empty)...)
+	cases = append(cases, venueSpecCases(venueHandler(t, fakeVenues{}), venueHandler(t, nil))...)
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			req := httptest.NewRequestWithContext(t.Context(), cmp.Or(c.method, http.MethodGet), c.path, nil)
@@ -291,7 +302,7 @@ func TestSpecValidatesResponses(t *testing.T) {
 			if err := openapi3filter.ValidateResponse(t.Context(), out.SetBodyBytes(rec.Body.Bytes())); err != nil {
 				t.Fatalf("response: %v\n%s", err, rec.Body)
 			}
-			checkHeaders(t, route.Path, rec)
+			checkHeaders(t, route.Path, req, rec)
 			checkDeclared(t, route.Operation, rec)
 		})
 	}
