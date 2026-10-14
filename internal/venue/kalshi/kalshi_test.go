@@ -259,12 +259,16 @@ func TestTradesCountAGapWhenThePageCapIsHit(t *testing.T) {
 		a.prints = append(a.prints, []kalshi.Trade{row})
 	}
 	m := kalshi.NewMetrics(prometheus.NewRegistry())
-	tr := &kalshi.Trades{Client: newClient(t, a), Store: venuetest.New(), MinUSD: 10000, Metrics: m}
+	st := venuetest.New()
+	tr := &kalshi.Trades{Client: newClient(t, a), Store: st, MinUSD: 10000, Metrics: m}
 	if err := tr.Poll(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if n := testutil.ToFloat64(m.Gaps()); n != 1 || len(a.queries) != 30 {
 		t.Fatalf("gaps %v after %d requests", n, len(a.queries))
+	}
+	if v, _ := st.Cursor(t.Context(), "kalshi/gaps"); v != "1" {
+		t.Fatalf("stored gap count %q", v)
 	}
 }
 

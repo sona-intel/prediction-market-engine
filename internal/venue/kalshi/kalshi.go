@@ -32,6 +32,7 @@ const (
 	comboPrefix   = "KXMVE"
 	tradesCursor  = "kalshi/trades"
 	settledCursor = "kalshi/settled"
+	gapsCursor    = "kalshi/gaps"
 )
 
 type Market struct {
@@ -302,7 +303,7 @@ func (t *Trades) Poll(ctx context.Context) error {
 	floor := int64(t.MinUSD * venue.Micro)
 	var keep []venue.Trade
 	var newest time.Time
-	cursor := ""
+	cursor, gapped := "", false
 	for page := range tradePages {
 		q := url.Values{"limit": {strconv.Itoa(pageSize)}, "min_ts": {strconv.FormatInt(since.Unix(), 10)}}
 		if cursor != "" {
@@ -331,6 +332,7 @@ func (t *Trades) Poll(ctx context.Context) error {
 		}
 		if page == tradePages-1 {
 			t.Metrics.gaps.Inc()
+			gapped = true
 		}
 	}
 	n, err := t.Store.InsertTrades(ctx, keep)
@@ -338,7 +340,22 @@ func (t *Trades) Poll(ctx context.Context) error {
 	if err != nil || newest.IsZero() {
 		return err
 	}
+	if gapped {
+		if err := t.addGap(ctx); err != nil {
+			slog.Warn("kalshi gap count write failed", "error", err)
+		}
+	}
 	return t.Store.SetCursor(ctx, tradesCursor, newest.Format(time.RFC3339Nano))
+}
+
+// addGap keeps the running count in the cursor table so the API can report it
+func (t *Trades) addGap(ctx context.Context) error {
+	v, err := t.Store.Cursor(ctx, gapsCursor)
+	if err != nil {
+		return err
+	}
+	n, _ := strconv.Atoi(v)
+	return t.Store.SetCursor(ctx, gapsCursor, strconv.Itoa(n+1))
 }
 
 func maxTime(a, b time.Time) time.Time {
