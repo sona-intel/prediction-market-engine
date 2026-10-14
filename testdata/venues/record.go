@@ -1,6 +1,6 @@
 //go:build ignore
 
-// Records the venue fixtures from the live APIs, run from the engine root with: go run testdata/venues/record.go [hip4] [polyus]
+// Records the venue fixtures from the live APIs, run from the engine root as go run testdata/venues/record.go [hip4] [polyus]
 package main
 
 import (
