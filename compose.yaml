@@ -16,6 +16,42 @@ services:
       retries: 3
       start_period: 5s
       start_interval: 1s
+  pm-postgres:
+    image: postgres:17.5@sha256:aadf2c0696f5ef357aa7a68da995137f0cf17bad0bf6e1f17de06ae5c769b302
+    restart: unless-stopped
+    command: [postgres, -c, shared_buffers=64MB, -c, work_mem=8MB]
+    environment:
+      POSTGRES_USER: pm
+      POSTGRES_DB: pm
+      POSTGRES_PASSWORD: "${PM_PG_PASSWORD:?set PM_PG_PASSWORD in services/.env}"
+      PM_ENGINE_PASSWORD: "${PM_PG_ENGINE_PASSWORD:?set PM_PG_ENGINE_PASSWORD in services/.env}"
+    ports: ["127.0.0.1:5437:5432"]
+    volumes:
+      - pm-pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    mem_limit: 256m
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "3" } }
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U pm -d pm"], interval: 5s, timeout: 3s, retries: 20 }
+  pm-collect:
+    build: { context: ., args: { SERVICE: pm-collect } }
+    image: sona/pm-collect:dev
+    restart: unless-stopped
+    depends_on:
+      pm-postgres: { condition: service_healthy }
+    mem_limit: 128m
+    environment:
+      GOMEMLIMIT: 80MiB
+      PM_PG_URL: "postgres://pm_engine:${PM_PG_ENGINE_PASSWORD:?set PM_PG_ENGINE_PASSWORD in services/.env}@pm-postgres:5432/pm"
+    env_file: [{ path: .env, required: false }]
+    ports: ["127.0.0.1:8192:8080"]
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "3" } }
+    healthcheck:
+      test: ["CMD", "/app", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+      start_interval: 1s
   pm-build:
     profiles: [build]
     build: { context: ., args: { SERVICE: pm-build } }
@@ -26,3 +62,5 @@ services:
     env_file: [{ path: .env, required: false }]
     volumes: ["./data:/data"]
     logging: { driver: json-file, options: { max-size: 10m, max-file: "3" } }
+volumes:
+  pm-pgdata:

@@ -31,3 +31,17 @@ curl -s http://127.0.0.1:8191/internal/v1/status
 The build needs 35 GB free in `data/` (git-ignored, on the host disk). After a verified publish it deletes `stage/`, `tmp/` and `work.duckdb`, so `data/` holds only `pm.duckdb`. `build --keep-work` keeps them. The API contract is `pm-api/openapi.yaml`, served at `http://127.0.0.1:8090/specs/pm-api/openapi.yaml`.
 
 The wash solver runs in SQL over an edge table on disk (about 10 bytes a pair, 666 million directed pairs on the full history), and `PM_WASH_MAX_PAIRS` stops it at 1,000,000,000 pairs by default. `pm-build` runs under a 3g container cap (GOMEMLIMIT 1000MiB, DuckDB 700MB) and its anon memory reached 2.4 to 2.7 GiB on the full history, so a busier VM can kill it again, and a rerun resumes from the last finished bucket. A work file records its dataset root, revision and rules version and refuses a resume that does not match.
+
+## Collector
+
+`pm-collect` records the venues beyond Polymarket (Hyperliquid HIP-4, Kalshi, Polymarket US, Levr Bet) into `pm-postgres`, schema `pm`, and is the only writer. It applies the embedded migrations at start, runs one ticker per source, and keeps the cursor of each source in the `cursor` table. Metrics and `/healthz` are on `127.0.0.1:8192`. Postgres listens on `127.0.0.1:5437`.
+
+```sh
+# the passwords PM_PG_PASSWORD and PM_PG_ENGINE_PASSWORD live in services/.env
+docker compose up -d --no-deps pm-postgres pm-collect
+
+# run the Postgres tests against it with the owner role, they make and drop their own schema
+PM_TEST_PG=postgres://pm:...@127.0.0.1:5437/pm go test -race ./...
+```
+
+Tests that need Postgres skip when `PM_TEST_PG` is unset. Settings are `PM_PG_URL`, `PM_COLLECT_VENUES` and `PM_SNAP_KEEP_DAYS`, and every backfill switch stays off by default.

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+psql -v ON_ERROR_STOP=1 -v pw="$PM_ENGINE_PASSWORD" --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<'SQL'
+SELECT NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'pm_engine') AS missing \gset
+\if :missing
+CREATE ROLE pm_engine LOGIN PASSWORD :'pw' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+\else
+ALTER ROLE pm_engine LOGIN PASSWORD :'pw' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+\endif
+CREATE SCHEMA IF NOT EXISTS pm AUTHORIZATION pm_engine;
+ALTER SCHEMA pm OWNER TO pm_engine;
+ALTER ROLE pm_engine SET search_path = pm;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+SQL
