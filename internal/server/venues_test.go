@@ -319,7 +319,8 @@ func TestLevrTraderAndBoard(t *testing.T) {
 	if dig(t, board, "rows", 0, "liquidation_rate") != 0.5 || raw(t, board, "rows", 0, "size") != 38_000_000 || dig(t, board, "limit") != float64(5) {
 		t.Fatalf("%v", board)
 	}
-	expectProblem(t, get(t, srv, boardsPath+"skill?venue=levr"), http.StatusBadRequest, "invalid_id")
+	expectProblem(t, get(t, srv, boardsPath+"skill?venue=levr"), http.StatusBadRequest, "invalid_query")
+	expectProblem(t, get(t, srv, boardsPath+"wins?venue=levr"), http.StatusBadRequest, "invalid_id")
 }
 
 func TestVenuesWithoutTraderIDsHaveNoWalletRoutes(t *testing.T) {

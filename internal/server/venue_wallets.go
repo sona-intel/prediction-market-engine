@@ -9,6 +9,7 @@ import (
 	"pm/internal/levr"
 	"pm/internal/pgstore"
 	"pm/internal/skill"
+	"pm/internal/store"
 	"pm/internal/venue"
 )
 
@@ -193,13 +194,12 @@ func (a *app) venueBoard(w http.ResponseWriter, req *http.Request, code string) 
 			return nil, err
 		}
 		board := req.PathValue("board")
-		boards := []string{"pnl", "volume", "skill"}
-		detail := "The board must be pnl, volume or skill."
-		if code == venue.Levr {
-			boards, detail = boards[:2], "The board must be pnl or volume on levr."
+		if !slices.Contains(store.Boards, board) {
+			return nil, &requestError{codeInvalidID, "The board must be pnl, volume or skill."}
 		}
-		if !slices.Contains(boards, board) {
-			return nil, &requestError{codeInvalidID, detail}
+		// the board exists, so a venue without it is a query the venue cannot answer
+		if code == venue.Levr && board == "skill" {
+			return nil, &requestError{codeInvalidQuery, "Levr has no skill board, only pnl and volume."}
 		}
 		q := req.URL.Query()
 		limit, err := intParam(q, "limit", defaultLimit, 1, maxLimit)
