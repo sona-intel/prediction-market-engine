@@ -48,6 +48,8 @@ type topEvent struct {
 
 type topMarket struct {
 	Question      string    `json:"question"`
+	Label         string    `json:"label"`
+	Outcomes      []string  `json:"outcomes"`
 	OutcomePrices []float64 `json:"outcome_prices"`
 }
 
@@ -103,7 +105,7 @@ func (a *app) topMarkets(w http.ResponseWriter, req *http.Request) {
 				ev.EndDate = &e.EndDate
 			}
 			for _, m := range e.Markets {
-				ev.Markets = append(ev.Markets, topMarket{Question: m.Question, OutcomePrices: m.OutcomePrices})
+				ev.Markets = append(ev.Markets, topMarket{Question: m.Question, Label: m.Label, Outcomes: m.Outcomes, OutcomePrices: m.OutcomePrices})
 			}
 			out.Items = append(out.Items, ev)
 		}

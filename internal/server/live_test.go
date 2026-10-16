@@ -22,7 +22,7 @@ const (
 
 const fakeGamma = `[
  {"id":"11","slug":"big-game","title":"Big game","volume24hr":4115173.31,"volume":4199141.1,"liquidity":7916220.4,"endDate":"2026-10-13T19:00:00Z",
-  "markets":[{"question":"Will A win?","closed":false,"outcomePrices":"[\"0.535\", \"0.465\"]"}]},
+  "markets":[{"question":"Will A win?","groupItemTitle":"A","closed":false,"outcomes":"[\"Seahawks\", \"Broncos\"]","outcomePrices":"[\"0.535\", \"0.465\"]"}]},
  {"id":"12","slug":"open-ended","title":"Open ended","volume24hr":900.5,"liquidity":10,"markets":[]},
  {"id":"13","slug":"third","title":"Third","volume24hr":10,"liquidity":1,"endDate":"2026-12-01T00:00:00Z","markets":[]}
 ]`
@@ -87,7 +87,7 @@ func TestTopMarketsBody(t *testing.T) {
 		t.Fatalf("%d %v", r.status, r.header)
 	}
 	want := `{"kind":"pm_top_markets","items":[` +
-		`{"event_id":"11","slug":"big-game","title":"Big game","volume_24h_usd":4115173.31,"volume_total_usd":4199141.1,"liquidity_usd":7916220.4,"end_date":"2026-10-13T19:00:00Z","markets":[{"question":"Will A win?","outcome_prices":[0.535,0.465]}]},` +
+		`{"event_id":"11","slug":"big-game","title":"Big game","volume_24h_usd":4115173.31,"volume_total_usd":4199141.1,"liquidity_usd":7916220.4,"end_date":"2026-10-13T19:00:00Z","markets":[{"question":"Will A win?","label":"A","outcomes":["Seahawks","Broncos"],"outcome_prices":[0.535,0.465]}]},` +
 		`{"event_id":"12","slug":"open-ended","title":"Open ended","volume_24h_usd":900.5,"volume_total_usd":null,"liquidity_usd":10,"end_date":null,"markets":[]}],` +
 		`"fetched_at":"2026-10-13T12:00:00Z","stale":false,"source":"polymarket-gamma"}`
 	if string(r.body) != want {

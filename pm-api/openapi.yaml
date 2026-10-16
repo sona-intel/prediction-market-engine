@@ -327,7 +327,7 @@ paths:
       description: |
         Call this to see which Polymarket events traded the most in the last 24 hours. The service polls Polymarket's Gamma API once a minute for the top 50 active, open events by 24-hour volume and keeps the answer in memory. `limit` is how many to return, 1 to 50, 20 by default, in volume order.
 
-        An item is an `event_id`, `slug` and `title`, its `volume_24h_usd`, its all-time `volume_total_usd` (`null` when Polymarket sends none) and `liquidity_usd`, its `end_date` (RFC 3339 as Polymarket writes it, or `null` when the event has none) and its `markets`. A market is a `question` and `outcome_prices`, the current price of each outcome in order (for a Yes or No market, Yes first), each from 0 to 1. A market that has closed is left out, an event lists at most 10 markets, and an unreadable price list becomes an empty one. **The dollar amounts are plain JSON numbers**, because this is a live feed and not ledger data.
+        An item is an `event_id`, `slug` and `title`, its `volume_24h_usd`, its all-time `volume_total_usd` (`null` when Polymarket sends none) and `liquidity_usd`, its `end_date` (RFC 3339 as Polymarket writes it, or `null` when the event has none) and its `markets`. A market is a `question`, its `outcomes` (the name of each outcome, such as `Seahawks` and `Broncos`, or `Yes` and `No`) and `outcome_prices`, the current price of each outcome in the same order as `outcomes` (for a Yes or No market, Yes first), each from 0 to 1. The other venues' rows carry no `outcomes`, because each is one Yes price for the named participant. A market that has closed is left out, an event lists at most 10 markets, and an unreadable price list becomes an empty one. **The dollar amounts are plain JSON numbers**, because this is a live feed and not ledger data.
 
         `fetched_at` is when the copy was taken, to whole seconds in UTC. `stale` is `true` when the last poll failed and this is the last good copy, and the response then also has `X-Sona-Cache: stale`. `source` is always `polymarket-gamma`. The answer has no `coverage` object and no `Sona-*` stamp headers.
 
@@ -358,7 +358,7 @@ paths:
               examples:
                 two:
                   summary: The two busiest events (limit=2)
-                  value: {"kind": "pm_top_markets", "items": [{"event_id": "1109542", "slug": "ucl-atm-mnu-2026-10-13", "title": "Club Atletico de Madrid vs. Manchester United FC", "volume_24h_usd": 4115173.31, "volume_total_usd": 4199141.12, "liquidity_usd": 7916220.44, "end_date": "2026-10-13T19:00:00Z", "markets": [{"question": "Will Club Atletico de Madrid win on 2026-10-13?", "outcome_prices": [0.535, 0.465]}]}, {"event_id": "1109600", "slug": "open-ended", "title": "An event without an end date", "volume_24h_usd": 900.5, "volume_total_usd": null, "liquidity_usd": 10, "end_date": null, "markets": []}], "fetched_at": "2026-10-13T18:30:00Z", "stale": false, "source": "polymarket-gamma"}
+                  value: {"kind": "pm_top_markets", "items": [{"event_id": "1109542", "slug": "ucl-atm-mnu-2026-10-13", "title": "Club Atletico de Madrid vs. Manchester United FC", "volume_24h_usd": 4115173.31, "volume_total_usd": 4199141.12, "liquidity_usd": 7916220.44, "end_date": "2026-10-13T19:00:00Z", "markets": [{"question": "Will Club Atletico de Madrid win on 2026-10-13?", "label": "Club Atletico de Madrid", "outcomes": ["Yes", "No"], "outcome_prices": [0.535, 0.465]}]}, {"event_id": "1109600", "slug": "open-ended", "title": "An event without an end date", "volume_24h_usd": 900.5, "volume_total_usd": null, "liquidity_usd": 10, "end_date": null, "markets": []}], "fetched_at": "2026-10-13T18:30:00Z", "stale": false, "source": "polymarket-gamma"}
                 kalshi:
                   summary: The two Kalshi markets with the most 24-hour volume (venue=kalshi, limit=2)
                   value: {"kind": "pm_top_markets", "venue": "kalshi", "items": [{"market_id": "KXMLBGAME-26OCT142000MILLAD-LAD", "title": "Los Angeles D wins", "market_kind": "KXMLBGAME", "status": "open", "result": null, "close_time": "2026-10-18T00:00:00Z", "yes_price": 0.62, "volume_usd": 2075833.39, "open_interest_usd": 1965466.55, "volume_24h_usd": 1888224.08, "as_of": "2026-10-14T22:31:04Z"}, {"market_id": "KXMLBGAME-26OCT142000MILLAD-MIL", "title": "Milwaukee wins", "market_kind": "KXMLBGAME", "status": "open", "result": null, "close_time": "2026-10-18T00:00:00Z", "yes_price": 0.39, "volume_usd": 1703802.99, "open_interest_usd": 1585638.4, "volume_24h_usd": 1479360.36, "as_of": "2026-10-14T22:31:04Z"}], "as_of": "2026-10-14T22:31:04Z", "source": "kalshi-api", "coverage": {"venue": "kalshi", "since": "2026-10-14T20:18:26Z", "last_ok": "2026-10-14T22:47:26Z", "mode": "partial_tape", "wallets": false, "gaps": null, "note": "Market snapshots of the 500 markets with the most 24-hour volume, and only the prints that cost the taker at least $10,000. Kalshi publishes no trader ids. History starts when recording started."}}
@@ -1465,11 +1465,18 @@ components:
     TopMarket:
       type: object
       additionalProperties: false
-      required: [question, outcome_prices]
+      required: [question, label, outcomes, outcome_prices]
       properties:
         question:
           type: string
           description: The question the market asks.
+        label:
+          type: string
+          description: Polymarket's short name for the market within its event, such as a candidate (`Lula`) or a level (`No change`). Empty when Polymarket sends none, as for the main market of a game.
+        outcomes:
+          type: array
+          description: The name of each outcome, in the same order as `outcome_prices`, such as `["Seahawks", "Broncos"]` or `["Yes", "No"]`. Empty when Polymarket's name list could not be read.
+          items: {type: string}
         outcome_prices:
           type: array
           description: The current price of each outcome in order, each from 0 to 1. Empty when Polymarket's price list could not be read.

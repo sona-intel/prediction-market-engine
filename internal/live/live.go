@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,8 @@ const (
 
 type Market struct {
 	Question      string
+	Label         string
+	Outcomes      []string
 	OutcomePrices []float64
 }
 
@@ -178,7 +181,9 @@ type gammaEvent struct {
 
 type gammaMarket struct {
 	Question      string `json:"question"`
+	Label         string `json:"groupItemTitle"`
 	Closed        bool   `json:"closed"`
+	Outcomes      string `json:"outcomes"`
 	OutcomePrices string `json:"outcomePrices"`
 }
 
@@ -209,11 +214,22 @@ func (p *Poller) fetchEvents(ctx context.Context) ([]Event, error) {
 			if m.Closed || len(ev.Markets) == marketsEach {
 				continue
 			}
-			ev.Markets = append(ev.Markets, Market{Question: m.Question, OutcomePrices: parsePrices(m.OutcomePrices)})
+			ev.Markets = append(ev.Markets, Market{
+				Question: m.Question, Label: strings.TrimSpace(m.Label), Outcomes: parseOutcomes(m.Outcomes), OutcomePrices: parsePrices(m.OutcomePrices),
+			})
 		}
 		out = append(out, ev)
 	}
 	return out, nil
+}
+
+// parseOutcomes reads the outcome names that Gamma sends as a JSON array inside a string
+func parseOutcomes(s string) []string {
+	var names []string
+	if json.Unmarshal([]byte(s), &names) != nil || names == nil {
+		return []string{}
+	}
+	return names
 }
 
 // parsePrices reads the JSON array that Gamma sends inside a string

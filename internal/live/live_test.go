@@ -17,7 +17,7 @@ import (
 const gammaBody = `[
  {"id":"11","slug":"big-game","title":"Big game","volume24hr":4115173.31,"liquidity":7916220.4,"endDate":"2026-10-13T19:00:00Z",
   "markets":[
-   {"question":"Will A win?","closed":false,"outcomePrices":"[\"0.535\", \"0.465\"]"},
+   {"question":"Will A win?","groupItemTitle":" A ","closed":false,"outcomes":"[\"Seahawks\", \"Broncos\"]","outcomePrices":"[\"0.535\", \"0.465\"]"},
    {"question":"Done already?","closed":true,"outcomePrices":"[\"1\", \"0\"]"},
    {"question":"Broken prices","closed":false,"outcomePrices":"not json"}]},
  {"id":"12","slug":"open-ended","title":"Open ended","volume24hr":900.5,"markets":[]}
@@ -97,6 +97,15 @@ func TestPollParsesBothFeeds(t *testing.T) {
 	}
 	if got := first.Markets[0].OutcomePrices; len(got) != 2 || got[0] != 0.535 || got[1] != 0.465 {
 		t.Errorf("prices %v", got)
+	}
+	if got := first.Markets[0].Outcomes; len(got) != 2 || got[0] != "Seahawks" || got[1] != "Broncos" {
+		t.Errorf("outcomes %v", got)
+	}
+	if first.Markets[0].Label != "A" || first.Markets[1].Label != "" {
+		t.Errorf("labels %q %q", first.Markets[0].Label, first.Markets[1].Label)
+	}
+	if got := first.Markets[1].Outcomes; got == nil || len(got) != 0 {
+		t.Errorf("a market without names should have empty outcomes, got %#v", got)
 	}
 	if got := first.Markets[1].OutcomePrices; got == nil || len(got) != 0 {
 		t.Errorf("unreadable prices should be empty, got %#v", got)
